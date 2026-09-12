@@ -42,7 +42,7 @@ io.on('connection', (socket) => {
         if (room.players.some(p => p.name === playerName)) return socket.emit('error_message', 'ชื่อซ้ำ!');
 
         room.players.push({ 
-            id: socket.id, name: playerName, hp: 100, 
+            id: socket.id, name: playerName, hp: 15, 
             energy: 5, visibleEnergy: 5,
             hand: [], deck: generateDeck(),
             doubleEnergyTurns: 0, lowEnergyTurns: 0, isDefenseBlocked: false 
