@@ -36,7 +36,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('join_room', ({ roomCode, playerName }) => {
-        const room = rooms[socket.roomCode];
+        const room = rooms[roomCode];
         if (!room) return socket.emit('error_message', 'ไม่พบห้องนี้!');
         if (room.gameStarted) return socket.emit('error_message', 'เกมเริ่มไปแล้ว!');
         if (room.players.length >= 8) return socket.emit('error_message', 'ห้องเต็มแล้ว!');
