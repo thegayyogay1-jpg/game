@@ -55,10 +55,11 @@
         .card {
             display: inline-block; background: #fff; color: #000;
             padding: 8px; margin: 4px; border-radius: 6px;
-            width: 100px; font-size: 12px;
+            width: 105px; font-size: 12px;
             border: 3px solid transparent; cursor: pointer; user-select: none;
         }
         .card.magic { background: #a29bfe; color: #fff; }
+        .card.fixed { background: #74b9ff; color: #000; font-weight: bold; }
         .card.selected { border-color: #ff4757; background: #ffeaa7; color:#000; transform: translateY(-5px); }
 
         .dice {
@@ -74,7 +75,7 @@
             background: rgba(0,0,0,0.85); display: none;
             justify-content: center; align-items: center; z-index: 999;
         }
-        .modal-content { background: #222; padding: 25px; border-radius: 12px; border: 2px solid #ff4757; width: 320px; }
+        .modal-content { background: #222; padding: 25px; border-radius: 12px; border: 2px solid #ff4757; width: 330px; }
         @keyframes glow { from { border-color: #ffa502; } to { border-color: #ff4757; } }
     </style>
 </head>
@@ -113,7 +114,6 @@
             <div id="hand-cards"></div>
             <p id="attack-hint" style="font-size: 13px; color: #ffa502;"></p>
             
-            <!-- ปุ่มจบเทิร์นแสดงเฉพาะตาตัวเอง -->
             <button id="end-turn-btn" class="hidden" onclick="endTurn()" style="background: #2ed573;">จบเทิร์น</button>
         </div>
     </div>
@@ -126,8 +126,8 @@
         const socket = io();
         let myId = '';
         let currentRoomData = null;
-        let selectedCards = []; // สำหรับการ์ดโจมตี
-        let selectedMagicCardIndex = null; // สำหรับการ์ดเวทมนตร์
+        let selectedCards = [];
+        let selectedMagicCardIndex = null;
 
         socket.on('connect', () => { myId = socket.id; });
         socket.on('error_message', (msg) => alert(msg));
@@ -187,13 +187,11 @@
             const currentTurnPlayer = currentRoomData.players[currentRoomData.currentTurnIndex];
             if(currentTurnPlayer.id !== myId) return alert('ยังไม่ใช่ตาของคุณ!');
 
-            if (type !== 'attack_defend') {
-                // เลือกใช้การ์ดเวทมนตร์
+            if (type === 'double_energy' || type === 'block_defense') {
                 selectedCards = [];
                 selectedMagicCardIndex = index;
-                document.getElementById('attack-hint').innerText = `✨ เลือกการ์ดเวทมนตร์แล้ว (ใช้ 2 Energy) -> คลิกเลือกเป้าหมาย (ตัวเองหรือเพื่อน) บนโต๊ะ`;
+                document.getElementById('attack-hint').innerText = `✨ เลือกการ์ดเวทมนตร์แล้ว (ใช้ 2 Energy) -> คลิกเลือกเป้าหมายบนโต๊ะ`;
             } else {
-                // เลือกการ์ดโจมตีปกติ
                 selectedMagicCardIndex = null;
                 const pos = selectedCards.indexOf(index);
                 if (pos > -1) {
@@ -221,12 +219,10 @@
             const me = currentRoomData.players.find(p => p.id === myId);
 
             if (selectedMagicCardIndex !== null) {
-                // ร่ายการ์ดเวทมนตร์
                 if (me.energy < 2) return alert('Energy ไม่พอ (ต้องการ 2)');
                 socket.emit('use_magic_card', { targetId, cardIndex: selectedMagicCardIndex });
                 selectedMagicCardIndex = null;
             } else if (selectedCards.length > 0) {
-                // โจมตีปกติ
                 if (targetId === myId) return alert('ไม่สามารถโจมตีตัวเองได้!');
                 const cost = selectedCards.length === 2 ? 5 : 3;
                 if (me.energy < cost) return alert(`Energy ไม่พอ (ต้องการ ${cost})`);
@@ -243,17 +239,30 @@
         function showModal() { document.getElementById('modal-overlay').style.display = 'flex'; }
         function hideModal() { document.getElementById('modal-overlay').style.display = 'none'; }
 
+        // ป๊อปอัพโดนคำสาปไร้เกราะ
+        socket.on('curse_blocked_alert', (data) => {
+            const modalBody = document.getElementById('modal-body');
+            showModal();
+            modalBody.innerHTML = `
+                <h3>🔮 คำสาปทำงาน!</h3>
+                <p style="color:#ff4757; font-weight:bold;">✨ ยินดีด้วย! คุณโดนเวทมนตร์คำสาปบล็อคการป้องกัน จึงไม่สามารถใช้การ์ดป้องกันได้!</p>
+                <p>เตรียมรับการโจมตีจาก <b>${data.attackerName}</b></p>
+                <button onclick="hideModal()" style="background:#ff4757;">รับชะตากรรม</button>
+            `;
+        });
+
         socket.on('defend_prompt', (data) => {
             const modalBody = document.getElementById('modal-body');
             showModal();
 
             if (data.hasDefenseCard) {
                 const me = currentRoomData.players.find(p => p.id === myId);
-                const cardIndex = me.hand.findIndex(c => c.type === 'attack_defend');
+                const cardIndex = me.hand.findIndex(c => c.type === 'attack_defend' || c.type === 'fixed_value');
+                const card = me.hand[cardIndex];
 
                 modalBody.innerHTML = `
                     <h3>⚠️ ถูก ${data.attackerName} โจมตี!</h3>
-                    <p>คุณมี "การ์ดป้องกัน" จะใช้ป้องกันหรือไม่?</p>
+                    <p>คุณมี <b>"${card.name}"</b> จะใช้ป้องกันหรือไม่?</p>
                     <button onclick="useDefense(${cardIndex})" style="background:#2ed573;">ใช้การ์ดป้องกัน</button>
                     <button onclick="skipDefense()">ยอมรับการโจมตี</button>
                 `;
@@ -281,14 +290,17 @@
             showModal();
 
             let diceHTML = '';
-            for(let i = 0; i < data.cardCount; i++) {
+            for(let i = 0; i < data.diceCount; i++) {
                 diceHTML += `<div class="dice" id="att-dice-${i}">?</div>`;
             }
 
+            let fixedText = data.fixedSum > 0 ? `<p style="color:#74b9ff;">➕ มีแต้มล็อคคงที่ติดมาด้วย: +${data.fixedSum}</p>` : '';
+
             modalBody.innerHTML = `
-                <h3>🎲 ทอยเต๋าโจมตี (${data.cardCount} ลูก)</h3>
-                <div>${diceHTML}</div><br>
-                <button id="roll-btn" onclick="animateAndRollAttacker(${data.cardCount})" style="background:#ffa502; color:#000; font-weight:bold;">เริ่มทอยเต๋า!</button>
+                <h3>🎲 ทอยเต๋าโจมตี (${data.diceCount} ลูก)</h3>
+                <div>${diceHTML}</div>
+                ${fixedText}<br>
+                <button id="roll-btn" onclick="animateAndRollAttacker(${data.diceCount})" style="background:#ffa502; color:#000; font-weight:bold;">เริ่มทอยเต๋า!</button>
             `;
         });
 
@@ -350,7 +362,7 @@
         socket.on('battle_result', (data) => {
             const attRollSum = data.attackerRolls.reduce((a, b) => a + b, 0);
             const attRollStr = data.attackerRolls.join(' + ');
-            alert(`⚔️ ผลการต่อสู้ (${data.attackerName} vs ${data.targetName})\n🎲 ฝ่ายโจมตีทอยได้: ${attRollStr} (รวม ${attRollSum})\n🛡️ ฝ่ายป้องกันทอยได้: ${data.targetRoll}\n💥 คำนวณดาเมจสุทธิ (${attRollSum} - ${data.targetRoll}): ${data.damage}`);
+            alert(`⚔️ ผลการต่อสู้ (${data.attackerName} vs ${data.targetName})\n🎲 ฝ่ายโจมตีได้แต้ม: ${attRollStr} (รวม ${attRollSum})\n🛡️ ฝ่ายป้องกันได้แต้ม: ${data.targetRoll}\n💥 ดาเมจสุทธิ (${attRollSum} - ${data.targetRoll}): ${data.damage}`);
             updateGameUI(data.roomState);
         });
 
@@ -365,6 +377,7 @@
             if(!me) return;
 
             document.getElementById('my-hp').innerText = me.hp;
+            // เจ้าของเทิร์นเห็น Energy จริงของตัวเอง
             document.getElementById('my-energy').innerText = me.energy;
 
             const currentTurnPlayer = room.players[room.currentTurnIndex];
@@ -372,7 +385,6 @@
 
             document.getElementById('turn-info').innerText = isMyTurn ? "🟢 ตาของคุณแล้ว!" : `⏳ ตาของ ${currentTurnPlayer.name}`;
 
-            // แสดง/ซ่อน ปุ่มจบเทิร์นเฉพาะเมื่อถึงตาตนเอง
             const endBtn = document.getElementById('end-turn-btn');
             if (isMyTurn) {
                 endBtn.classList.remove('hidden');
@@ -389,9 +401,12 @@
             handDiv.innerHTML = '';
             me.hand.forEach((card, index) => {
                 const isSelected = (selectedCards.includes(index) || selectedMagicCardIndex === index) ? 'selected' : '';
-                const isMagic = card.type !== 'attack_defend' ? 'magic' : '';
+                let cardClass = '';
+                if (card.type === 'double_energy' || card.type === 'block_defense') cardClass = 'magic';
+                if (card.type === 'fixed_value') cardClass = 'fixed';
+
                 handDiv.innerHTML += `
-                    <div class="card ${isMagic} ${isSelected}" onclick="toggleSelectCard(${index}, '${card.type}')">
+                    <div class="card ${cardClass} ${isSelected}" onclick="toggleSelectCard(${index}, '${card.type}')">
                         <b>${card.name}</b>
                     </div>
                 `;
@@ -417,15 +432,17 @@
 
                 const isTurn = p.id === currentTurnPlayer.id ? 'active-turn' : '';
                 
-                // ตรวจสอบเป้าหมายของการ์ดเวทมนตร์หรือการโจมตี
                 let isTargetable = false;
                 if (selectedMagicCardIndex !== null && p.hp > 0) {
-                    isTargetable = true; // การ์ดเวทร่ายใส่ใครก็ได้ (รวมถึงตัวเอง)
+                    isTargetable = true;
                 } else if (selectedCards.length > 0 && p.id !== myId && p.hp > 0) {
-                    isTargetable = true; // การโจมตีเลือกใส่ได้แค่เพื่อน
+                    isTargetable = true;
                 }
 
                 const targetClass = isTargetable ? 'targetable' : '';
+
+                // ผู้เล่นอื่นจะเห็นค่า visibleEnergy (ไม่ลดทันทีจนกว่าจะจบเทิร์น)
+                const displayEnergy = (p.id === myId) ? p.energy : p.visibleEnergy;
 
                 const node = document.createElement('div');
                 node.className = `player-node ${isTurn} ${targetClass}`;
@@ -436,7 +453,7 @@
                 node.innerHTML = `
                     <div style="font-size:12px; font-weight:bold;">${p.name}</div>
                     <div style="font-size:11px; color:#ff4757;">HP: ${p.hp}</div>
-                    <div style="font-size:10px; color:#2ed573;">NRG: ${p.energy}</div>
+                    <div style="font-size:10px; color:#2ed573;">NRG: ${displayEnergy}</div>
                 `;
                 table.appendChild(node);
             });
