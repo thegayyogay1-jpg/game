@@ -20,7 +20,7 @@ io.on('connection', (socket) => {
         rooms[roomCode] = {
             host: socket.id,
             players: [{ 
-                id: socket.id, name: playerName, hp: 100, 
+                id: socket.id, name: playerName, hp: 15, 
                 energy: 5, visibleEnergy: 5, // energy = ค่าจริง, visibleEnergy = ค่าที่เพื่อนเห็น
                 hand: [], deck: generateDeck(),
                 doubleEnergyTurns: 0, lowEnergyTurns: 0, isDefenseBlocked: false 
