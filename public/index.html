@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Card Game Party</title>
-    <script src="/socket.io/socket.io.js"></script>
+    <!-- เปลี่ยนมาใช้ CDN เพื่อป้องกันปัญหา 404 Not Found -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <style>
         body { font-family: sans-serif; background: #222; color: #fff; text-align: center; padding: 20px; }
         .box { background: #333; padding: 20px; border-radius: 8px; max-width: 450px; margin: 20px auto; }
@@ -24,7 +25,6 @@
 
     <h1>🃏 เกมการ์ดปาร์ตี้</h1>
 
-    <!-- หน้าแรก: ใส่ชื่อและสร้าง/เข้าห้อง (กดแล้วเด้งเข้าทันที) -->
     <div id="lobby-screen" class="box">
         <h3>เข้าสู่เกม</h3>
         <input type="text" id="playerName" placeholder="ชื่อของคุณ"><br>
@@ -33,7 +33,6 @@
         <button onclick="joinRoom()">เข้าห้อง</button>
     </div>
 
-    <!-- หน้าห้องรอ -->
     <div id="waiting-screen" class="box hidden">
         <h3 id="room-title">ห้อง: -</h3>
         <p>รายชื่อผู้เล่นในห้อง:</p>
@@ -41,7 +40,6 @@
         <button id="start-btn" class="hidden" onclick="startGame()">เริ่มเกม</button>
     </div>
 
-    <!-- หน้าจอเล่นเกม -->
     <div id="game-screen" class="hidden">
         <h2 id="turn-info">ตาของใครบางคน</h2>
         <div class="box">
@@ -63,14 +61,12 @@
         <button onclick="endTurn()" style="background: #2ed573;">จบเทิร์น</button>
     </div>
 
-    <!-- ป๊อปอัพกลางจอ (สำหรับแจ้งเตือน / ป้องกัน / ทอยเต๋า) -->
     <div id="modal-overlay" class="hidden">
-        <div class="modal-content" id="modal-body">
-            <!-- เนื้อหาป๊อปอัพจะเปลี่ยนไปตามสถานการณ์ -->
-        </div>
+        <div class="modal-content" id="modal-body"></div>
     </div>
 
     <script>
+        // หาก Deploy Backend แยก ให้ใส่ URL เช่น io('https://your-backend.onrender.com')
         const socket = io();
         let myId = '';
         let currentRoomData = null;
@@ -93,13 +89,11 @@
             socket.emit('join_room', { roomCode: code, playerName: name });
         }
 
-        // เมื่อสร้างหรือเข้าห้องสำเร็จ เด้งเข้าห้องรอทันที
         socket.on('room_joined', (room) => {
             document.getElementById('lobby-screen').classList.add('hidden');
             document.getElementById('waiting-screen').classList.remove('hidden');
             document.getElementById('room-title').innerText = `ห้อง: ${document.getElementById('roomCode').value}`;
             
-            // ถ้าเป็นคนสร้างห้อง ให้โชว์ปุ่มเริ่มเกม
             if (room.host === myId) {
                 document.getElementById('start-btn').classList.remove('hidden');
             }
@@ -132,7 +126,6 @@
         function drawCard() { socket.emit('draw_card'); }
         function endTurn() { socket.emit('end_turn'); }
 
-        // เลือกการ์ดในมือเพื่อเตรียมโจมตี
         function selectCardToAttack(index) {
             const currentTurnPlayer = currentRoomData.players[currentRoomData.currentTurnIndex];
             if(currentTurnPlayer.id !== myId) {
@@ -145,36 +138,30 @@
             selectedCardIndexForAttack = index;
             alert('เลือกการ์ดแล้ว! ตอนนี้ให้คลิกที่กรอบของเพื่อนด้านล่างเพื่อเลือกเป้าหมายที่จะโจมตี');
             
-            // ทำให้กรอบเป้าหมายกระพริบ
             document.querySelectorAll('.target-card').forEach(el => {
                 el.classList.add('flashing');
             });
         }
 
-        // กดเลือกเป้าหมายที่กระพริบ
         function targetPlayer(targetId) {
             if (selectedCardIndexForAttack === null) {
                 return alert('กรุณากดเลือก "ใช้โจมตี" ที่การ์ดในมือก่อน!');
             }
 
-            // ส่งข้อมูลโจมตีไปหลังบ้าน
             socket.emit('initiate_attack', { targetId: targetId, cardIndex: selectedCardIndexForAttack });
             selectedCardIndexForAttack = null;
 
-            // เอาสีกระพริบออก
             document.querySelectorAll('.target-card').forEach(el => {
                 el.classList.remove('flashing');
             });
         }
 
-        // ป๊อปอัพสำหรับผู้ถูกโจมตี (เลือกว่าจะใช้การ์ดป้องกันไหม)
         socket.on('defend_prompt', (data) => {
             const overlay = document.getElementById('modal-overlay');
             const modalBody = document.getElementById('modal-body');
             overlay.classList.remove('hidden');
 
             if (data.hasDefenseCard) {
-                // หาอินเด็กซ์ของการ์ดป้องกันในมือตัวเอง
                 const me = currentRoomData.players.find(p => p.id === myId);
                 const cardIndex = me.hand.findIndex(c => c.name === 'การ์ดโจมตี/ป้องกัน');
 
@@ -203,7 +190,6 @@
             socket.emit('skip_defense');
         }
 
-        // ป๊อปอัพให้ผู้โจมตีทอยเต๋า
         socket.on('request_attacker_roll', (data) => {
             const overlay = document.getElementById('modal-overlay');
             const modalBody = document.getElementById('modal-body');
@@ -240,18 +226,15 @@
             document.getElementById('my-hp').innerText = me.hp;
             document.getElementById('my-energy').innerText = me.energy;
 
-            // แสดงการ์ดในมือ
             const handDiv = document.getElementById('hand-cards');
             handDiv.innerHTML = '';
             me.hand.forEach((card, index) => {
                 handDiv.innerHTML += `<div class="card"><b>${card.name}</b><br>DMG: ${card.baseDamage}<br><button onclick="selectCardToAttack(${index})" style="padding:5px; font-size:11px; margin-top:5px; background:#ff4757;">ใช้โจมตี</button></div>`;
             });
 
-            // เช็คตาเดิน
             const currentTurnPlayer = room.players[room.currentTurnIndex];
             document.getElementById('turn-info').innerText = currentTurnPlayer.id === myId ? "🟢 ตาของคุณแล้ว!" : `⏳ ตาของ ${currentTurnPlayer.name}`;
 
-            // รายชื่อเป้าหมายโจมตี (แปลงเป็นกล่องคลิกได้)
             const targetDiv = document.getElementById('target-list');
             targetDiv.innerHTML = '';
             room.players.forEach(p => {
