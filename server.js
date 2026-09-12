@@ -21,9 +21,10 @@ io.on('connection', (socket) => {
             host: socket.id,
             players: [{ 
                 id: socket.id, name: playerName, hp: 15, 
-                energy: 5, visibleEnergy: 5, // energy = ค่าจริง, visibleEnergy = ค่าที่เพื่อนเห็น
+                energy: 5, visibleEnergy: 5,
                 hand: [], deck: generateDeck(),
-                doubleEnergyTurns: 0, lowEnergyTurns: 0, isDefenseBlocked: false 
+                doubleEnergyTurns: 0, lowEnergyTurns: 0, isDefenseBlocked: false,
+                activeCounter: null // เก็บสถานะการตั้งท่าสวนกลับ { name, rollValue }
             }],
             currentTurnIndex: 0,
             gameStarted: false,
@@ -45,7 +46,8 @@ io.on('connection', (socket) => {
             id: socket.id, name: playerName, hp: 15, 
             energy: 5, visibleEnergy: 5,
             hand: [], deck: generateDeck(),
-            doubleEnergyTurns: 0, lowEnergyTurns: 0, isDefenseBlocked: false 
+            doubleEnergyTurns: 0, lowEnergyTurns: 0, isDefenseBlocked: false,
+            activeCounter: null
         });
         socket.join(roomCode);
         socket.roomCode = roomCode;
@@ -80,8 +82,29 @@ io.on('connection', (socket) => {
         player.energy -= 1;
         player.hand.push(player.deck.pop());
         
-        // ส่งอัปเดตเฉพาะผู้เล่นคนนี้ เพื่อไม่ให้คนอื่นเห็น Energy ลด
         socket.emit('update_room', room);
+    });
+
+    // 1. กดใช้การ์ดสวนกลับในตาตัวเอง (ใช้ 2 Energy)
+    socket.on('prepare_counter_card', ({ cardIndex }) => {
+        const room = rooms[socket.roomCode];
+        if (!room) return;
+        const player = room.players.find(p => p.id === socket.id);
+
+        if (player.energy < 2) return socket.emit('error_message', 'Energy ไม่พอสำหรับใช้การ์ดสวนกลับ (ต้องการ 2)');
+
+        const card = player.hand.splice(cardIndex, 1)[0];
+        player.energy -= 2;
+
+        // สุ่มทอยเต๋าล่วงหน้า (เพื่อนจะไม่เห็นแต้มนี้)
+        const counterRoll = Math.floor(Math.random() * 6) + 1;
+        player.activeCounter = {
+            name: card.name,
+            rollValue: counterRoll
+        };
+
+        socket.emit('alert_message', `⚔️ ตั้งท่าสวนกลับสำเร็จ! (แต้มแอบทอยได้: ${counterRoll})`);
+        io.to(room.code || socket.roomCode).emit('update_room', room);
     });
 
     // ใช้นักเวทมนตร์
@@ -130,20 +153,33 @@ io.on('connection', (socket) => {
             usedCards: usedCards,
             attackerRolls: [],
             targetRoll: 0,
-            targetDefenseCard: null
+            targetDefenseCard: null,
+            useCounter: false
         };
 
-        // ตรวจสอบคำสาปบล็อคป้องกัน
+        const hasDefenseCards = target.hand.some(c => c.type === 'attack_defend' || c.type === 'fixed_value');
+
+        // คำสาปบล็อคเกราะ
         if (target.isDefenseBlocked) {
             target.isDefenseBlocked = false; // ปลดคำสาปออก
-            // แจ้งเตือนฝ่ายที่โดนคำสาป
-            io.to(target.id).emit('curse_blocked_alert', { attackerName: attacker.name });
-            startDicePhase(room, false);
+            
+            // หากมีท่าสวนกลับอยู่ ถึงโดนคำสาปก็ยังสามารถส่ง prompt ให้เลือกใช้สวนกลับได้
+            if (target.activeCounter) {
+                io.to(target.id).emit('defend_prompt', {
+                    attackerName: attacker.name,
+                    hasDefenseCard: false, // บล็อคเกราะปกติ
+                    isCurseBlocked: true,
+                    cardCount: cardIndices.length
+                });
+            } else {
+                io.to(target.id).emit('curse_blocked_alert', { attackerName: attacker.name });
+                startDicePhase(room, false);
+            }
         } else {
-            const defenseCards = target.hand.filter(c => c.type === 'attack_defend' || c.type === 'fixed_value');
             io.to(target.id).emit('defend_prompt', {
                 attackerName: attacker.name,
-                hasDefenseCard: defenseCards.length > 0,
+                hasDefenseCard: hasDefenseCards,
+                isCurseBlocked: false,
                 cardCount: cardIndices.length
             });
         }
@@ -170,11 +206,19 @@ io.on('connection', (socket) => {
         startDicePhase(room, true);
     });
 
+    // 2. เมื่อโดนโจมตี แล้วเลือกใช้การ์ดสวนกลับ
+    socket.on('use_counter_defense', () => {
+        const room = rooms[socket.roomCode];
+        if (!room || !room.pendingAttack) return;
+
+        room.pendingAttack.useCounter = true;
+        startDicePhase(room, true);
+    });
+
     function startDicePhase(room, isDefending) {
         const attackInfo = room.pendingAttack;
         attackInfo.isDefending = isDefending;
 
-        // คำนวณแต้มการ์ดโจมตี (แยกใบที่เป็นแต้มตาย กับ ใบสุ่มเต๋า)
         let fixedSum = 0;
         let randomDiceCount = 0;
 
@@ -196,7 +240,6 @@ io.on('connection', (socket) => {
                 fixedSum: fixedSum
             });
         } else {
-            // ไม่ต้องทอยเต๋า ใช้แต้มตายตัวเลย
             attackInfo.attackerRolls = [fixedSum];
             processDefenderPhase(room);
         }
@@ -218,10 +261,16 @@ io.on('connection', (socket) => {
     function processDefenderPhase(room) {
         const attackInfo = room.pendingAttack;
 
+        // ถ้าเลือกใช้การ์ดสวนกลับ
+        if (attackInfo.useCounter) {
+            finalizeBattle(room, 0); // จะคำนวณแต้มสวนกลับต่อใน finalizeBattle
+            return;
+        }
+
+        // ป้องกันปกติ
         if (attackInfo.isDefending && attackInfo.targetDefenseCard) {
             const defCard = attackInfo.targetDefenseCard;
             if (defCard.type === 'fixed_value') {
-                // ป้องกันด้วยแต้มตายตัว ไม่ต้องทอยเต๋า
                 finalizeBattle(room, defCard.value);
             } else {
                 io.to(attackInfo.targetId).emit('request_defender_roll');
@@ -243,7 +292,50 @@ io.on('connection', (socket) => {
         const target = room.players.find(p => p.id === attackInfo.targetId);
 
         const totalAttackerRoll = attackInfo.attackerRolls.reduce((a, b) => a + b, 0);
-        
+
+        // --- คำนวณผลลัพธ์กรณีใช้ การ์ดสวนกลับ ---
+        if (attackInfo.useCounter && target.activeCounter) {
+            const counterVal = target.activeCounter.rollValue;
+            target.activeCounter = null; // ใช้แล้วรีเซ็ตสถานะทันที
+
+            if (counterVal > totalAttackerRoll) {
+                // กรณีสวนกลับชนะ (กันดาเมจ 100% + โจมตีสวน = แต้มสวน + ครึ่งหนึ่งของแต้มโจมตี ปัดลง)
+                const counterDamage = counterVal + Math.floor(totalAttackerRoll / 2);
+                attacker.hp = Math.max(0, attacker.hp - counterDamage);
+
+                io.to(socket.roomCode).emit('battle_result', {
+                    attackerName: attacker.name,
+                    targetName: target.name,
+                    attackerRolls: attackInfo.attackerRolls,
+                    targetRoll: counterVal,
+                    damage: 0,
+                    isCounterSuccess: true,
+                    counterDamage: counterDamage,
+                    counterWinner: target.name,
+                    counterLoser: attacker.name,
+                    roomState: room
+                });
+            } else {
+                // กรณีสวนกลับแพ้/เสมอ (รับดาเมจเต็มของฝ่ายโจมตี)
+                target.hp = Math.max(0, target.hp - totalAttackerRoll);
+
+                io.to(socket.roomCode).emit('battle_result', {
+                    attackerName: attacker.name,
+                    targetName: target.name,
+                    attackerRolls: attackInfo.attackerRolls,
+                    targetRoll: counterVal,
+                    damage: totalAttackerRoll,
+                    isCounterFailed: true,
+                    roomState: room
+                });
+            }
+
+            room.pendingAttack = null;
+            checkWinCondition(room);
+            return;
+        }
+
+        // --- คำนวณการโจมตี/ป้องกันปกติ ---
         let damage = totalAttackerRoll - targetRoll;
         if (damage < 0) damage = 0;
 
@@ -268,7 +360,6 @@ io.on('connection', (socket) => {
 
         const currentPlayer = room.players[room.currentTurnIndex];
 
-        // จบเทิร์น: อัปเดต visibleEnergy ให้คนอื่นเห็น Energy ล่าสุด
         if (currentPlayer.energy > 5) {
             currentPlayer.energy = 5;
         }
@@ -277,7 +368,6 @@ io.on('connection', (socket) => {
         room.currentTurnIndex = (room.currentTurnIndex + 1) % room.players.length;
         const nextPlayer = room.players[room.currentTurnIndex];
 
-        // คำนวณระบบ Energy ในเทิร์นถัดไป
         if (nextPlayer.doubleEnergyTurns > 0) {
             nextPlayer.energy += 6;
             nextPlayer.doubleEnergyTurns = 0;
@@ -307,6 +397,11 @@ function generateDeck() {
     // การ์ดแต้มคงที่ 1 ถึง 6 (อย่างละ 1 ใบ)
     for (let val = 1; val <= 6; val++) {
         deck.push({ id: `fixed_${val}`, name: `🎯 การ์ดแต้มล็อค [${val}]`, type: 'fixed_value', value: val });
+    }
+
+    // การ์ดสวนกลับ (5 ใบ)
+    for (let i = 0; i < 5; i++) {
+        deck.push({ id: 'counter_' + i, name: '⚔️ การ์ดสวนกลับ', type: 'counter_attack' });
     }
 
     // การ์ดเวทมนตร์ (อย่างละ 1 ใบ)
