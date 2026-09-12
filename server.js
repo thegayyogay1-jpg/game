@@ -1,12 +1,26 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
 
-app.use(express.static('public'));
+// อนุญาตให้การเชื่อมต่อข้าม Origin (CORS) ทำงานได้เมื่ออัปขึ้น Server
+const io = new Server(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST"]
+    }
+});
+
+// กำหนดโฟลเดอร์สำหรับให้บริการไฟล์ Static HTML/CSS/JS
+app.use(express.static(path.join(__dirname, 'public')));
+
+// fallback สำหรับเปิดหน้าแรกถ้าเข้าผ่าน Root Directory
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 const rooms = {};
 
@@ -55,7 +69,6 @@ io.on('connection', (socket) => {
             return;
         }
 
-        // เช็คชื่อซ้ำ
         const nameExists = room.players.some(p => p.name === playerName);
         if (nameExists) {
             socket.emit('error_message', 'ชื่อนี้ถูกใช้ไปแล้วในห้องนี้ กรุณาใช้ชื่ออื่น!');
@@ -117,7 +130,6 @@ io.on('connection', (socket) => {
         io.to(socket.roomCode).emit('update_room', room);
     });
 
-    // เริ่มกระบวนการโจมตี (หัก 3 Energy, ทิ้งการ์ด, ส่งสัญญาณให้เป้าหมายเลือกป้องกัน)
     socket.on('initiate_attack', ({ targetId, cardIndex }) => {
         const room = rooms[socket.roomCode];
         if (!room) return;
@@ -136,14 +148,12 @@ io.on('connection', (socket) => {
         attacker.energy -= 3;
         const usedCard = attacker.hand.splice(cardIndex, 1)[0];
 
-        // บันทึกสถานะการโจมตีค้างไว้
         room.pendingAttack = {
             attackerId: attacker.id,
             targetId: target.id,
             card: usedCard
         };
 
-        // แจ้งเตือนผู้ถูกโจมตีให้เลือกว่าจะใช้การ์ดป้องกันไหม
         const hasDefenseCard = target.hand.some(c => c.name === 'การ์ดโจมตี/ป้องกัน');
         io.to(target.id).emit('defend_prompt', {
             attackerName: attacker.name,
@@ -153,26 +163,21 @@ io.on('connection', (socket) => {
         io.to(socket.roomCode).emit('update_room', room);
     });
 
-    // กรณีผู้ถูกโจมตีเลือก "ไม่มีการ์ดป้องกัน" หรือ "ไม่ใช้"
     socket.on('skip_defense', () => {
         const room = rooms[socket.roomCode];
         if (!room || !room.pendingAttack) return;
-        
-        // ให้ผู้โจมตีทอยเต๋าคนเดียว (ไม่มีฝ่ายป้องกันทอยหักล้าง)
         executeBattle(room, 0);
     });
 
-    // กรณีผู้ถูกโจมตีเลือก "ใช้การ์ดป้องกัน" (ต้องเลือกการ์ดในมือมาทิ้ง 1 ใบ)
     socket.on('use_defense_card', ({ defenseCardIndex }) => {
         const room = rooms[socket.roomCode];
         if (!room || !room.pendingAttack) return;
 
         const target = room.players.find(p => p.id === socket.id);
         if (target.hand.length > defenseCardIndex) {
-            target.hand.splice(defenseCardIndex, 1); // ทิ้งการ์ดป้องกัน
+            target.hand.splice(defenseCardIndex, 1);
         }
 
-        // ให้ผู้โจมตีและผู้ป้องกันทอยเต๋ามาหักล้างกัน
         executeBattle(room, 1);
     });
 
@@ -181,7 +186,6 @@ io.on('connection', (socket) => {
         const attacker = room.players.find(p => p.id === attackInfo.attackerId);
         const target = room.players.find(p => p.id === attackInfo.targetId);
 
-        // ส่งสัญญาณให้คนโจมตีเด้งป๊อปอัพทอยเต๋า
         io.to(attacker.id).emit('request_attacker_roll', {
             targetId: target.id,
             hasDefenderRolled: hasDefenderRolled
@@ -189,7 +193,6 @@ io.on('connection', (socket) => {
         room.pendingAttack = null;
     }
 
-    // ผู้โจมตีทอยเต๋าเรียบร้อย คำนวณดาเมจ
     socket.on('submit_attacker_roll', ({ targetId, attackerRoll, hasDefenderRolled }) => {
         const room = rooms[socket.roomCode];
         if (!room) return;
