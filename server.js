@@ -24,7 +24,7 @@ io.on('connection', (socket) => {
                 energy: 5, visibleEnergy: 5,
                 hand: [], deck: generateDeck(),
                 doubleEnergyTurns: 0, lowEnergyTurns: 0, isDefenseBlocked: false,
-                activeCounter: null // เก็บสถานะการตั้งท่าสวนกลับ { name, rollValue }
+                activeCounter: null 
             }],
             currentTurnIndex: 0,
             gameStarted: false,
@@ -36,7 +36,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('join_room', ({ roomCode, playerName }) => {
-        const room = rooms[roomCode];
+        const room = rooms[socket.roomCode];
         if (!room) return socket.emit('error_message', 'ไม่พบห้องนี้!');
         if (room.gameStarted) return socket.emit('error_message', 'เกมเริ่มไปแล้ว!');
         if (room.players.length >= 8) return socket.emit('error_message', 'ห้องเต็มแล้ว!');
@@ -81,11 +81,10 @@ io.on('connection', (socket) => {
 
         player.energy -= 1;
         player.hand.push(player.deck.pop());
-        
         socket.emit('update_room', room);
     });
 
-    // 1. กดใช้การ์ดสวนกลับในตาตัวเอง (ใช้ 2 Energy)
+    // 1. กดใช้การ์ดสวนกลับในตาตัวเอง (สุ่มทอยพลังสวนกลับเก็บไว้)
     socket.on('prepare_counter_card', ({ cardIndex }) => {
         const room = rooms[socket.roomCode];
         if (!room) return;
@@ -96,15 +95,14 @@ io.on('connection', (socket) => {
         const card = player.hand.splice(cardIndex, 1)[0];
         player.energy -= 2;
 
-        // สุ่มทอยเต๋าล่วงหน้า (เพื่อนจะไม่เห็นแต้มนี้)
-        const counterRoll = Math.floor(Math.random() * 6) + 1;
+        const counterDamageBase = Math.floor(Math.random() * 6) + 1;
         player.activeCounter = {
             name: card.name,
-            rollValue: counterRoll
+            damageBase: counterDamageBase // ค่าพลังสวนกลับตายตัวที่สุ่มได้ตอนร่าย
         };
 
-        socket.emit('alert_message', `⚔️ ตั้งท่าสวนกลับสำเร็จ! (แต้มแอบทอยได้: ${counterRoll})`);
-        io.to(room.code || socket.roomCode).emit('update_room', room);
+        socket.emit('alert_message', `⚔️ ตั้งท่าสวนกลับสำเร็จ! (ได้ดาเมจสวนกลับพื้นฐาน: ${counterDamageBase})`);
+        io.to(socket.roomCode).emit('update_room', room);
     });
 
     // ใช้นักเวทมนตร์
@@ -159,15 +157,14 @@ io.on('connection', (socket) => {
 
         const hasDefenseCards = target.hand.some(c => c.type === 'attack_defend' || c.type === 'fixed_value');
 
-        // คำสาปบล็อคเกราะ
         if (target.isDefenseBlocked) {
-            target.isDefenseBlocked = false; // ปลดคำสาปออก
+            target.isDefenseBlocked = false;
             
-            // หากมีท่าสวนกลับอยู่ ถึงโดนคำสาปก็ยังสามารถส่ง prompt ให้เลือกใช้สวนกลับได้
+            // ถึงติดคำสาปบล็อคเกราะ ก็ยังกดใช้สวนกลับได้
             if (target.activeCounter) {
                 io.to(target.id).emit('defend_prompt', {
                     attackerName: attacker.name,
-                    hasDefenseCard: false, // บล็อคเกราะปกติ
+                    hasDefenseCard: false,
                     isCurseBlocked: true,
                     cardCount: cardIndices.length
                 });
@@ -206,7 +203,6 @@ io.on('connection', (socket) => {
         startDicePhase(room, true);
     });
 
-    // 2. เมื่อโดนโจมตี แล้วเลือกใช้การ์ดสวนกลับ
     socket.on('use_counter_defense', () => {
         const room = rooms[socket.roomCode];
         if (!room || !room.pendingAttack) return;
@@ -261,9 +257,9 @@ io.on('connection', (socket) => {
     function processDefenderPhase(room) {
         const attackInfo = room.pendingAttack;
 
-        // ถ้าเลือกใช้การ์ดสวนกลับ
+        // ถ้าเลือกใช้การ์ดสวนกลับ ให้ส่งไปทอยเต๋าป้องกันแบบสวนกลับ
         if (attackInfo.useCounter) {
-            finalizeBattle(room, 0); // จะคำนวณแต้มสวนกลับต่อใน finalizeBattle
+            io.to(attackInfo.targetId).emit('request_counter_roll');
             return;
         }
 
@@ -280,7 +276,15 @@ io.on('connection', (socket) => {
         }
     }
 
+    // เมื่อทอยเต๋าป้องกันปกติสำเร็จ
     socket.on('submit_defender_roll', ({ roll }) => {
+        const room = rooms[socket.roomCode];
+        if (!room || !room.pendingAttack) return;
+        finalizeBattle(room, roll);
+    });
+
+    // เมื่อทอยเต๋าสวนกลับสำเร็จ
+    socket.on('submit_counter_roll', ({ roll }) => {
         const room = rooms[socket.roomCode];
         if (!room || !room.pendingAttack) return;
         finalizeBattle(room, roll);
@@ -291,44 +295,42 @@ io.on('connection', (socket) => {
         const attacker = room.players.find(p => p.id === attackInfo.attackerId);
         const target = room.players.find(p => p.id === attackInfo.targetId);
 
-        const totalAttackerRoll = attackInfo.attackerRolls.reduce((a, b) => a + b, 0);
-
-        // --- คำนวณผลลัพธ์กรณีใช้ การ์ดสวนกลับ ---
+        // --- ระบบคำนวณการสวนกลับแบบแยกคิดเต๋าทีละลูก ---
         if (attackInfo.useCounter && target.activeCounter) {
-            const counterVal = target.activeCounter.rollValue;
-            target.activeCounter = null; // ใช้แล้วรีเซ็ตสถานะทันที
+            const counterDamageBase = target.activeCounter.damageBase;
+            const counterDefRoll = targetRoll; // แต้มที่ทอยป้องกันได้
+            target.activeCounter = null; // รีเซ็ตท่าสวนกลับ
 
-            if (counterVal > totalAttackerRoll) {
-                // กรณีสวนกลับชนะ (กันดาเมจ 100% + โจมตีสวน = แต้มสวน + ครึ่งหนึ่งของแต้มโจมตี ปัดลง)
-                const counterDamage = counterVal + Math.floor(totalAttackerRoll / 2);
-                attacker.hp = Math.max(0, attacker.hp - counterDamage);
+            let damageToTarget = 0;   // ดาเมจที่เราโดน
+            let damageToAttacker = 0; // ดาเมจที่เราสวนกลับใส่คนโจมตี
 
-                io.to(socket.roomCode).emit('battle_result', {
-                    attackerName: attacker.name,
-                    targetName: target.name,
-                    attackerRolls: attackInfo.attackerRolls,
-                    targetRoll: counterVal,
-                    damage: 0,
-                    isCounterSuccess: true,
-                    counterDamage: counterDamage,
-                    counterWinner: target.name,
-                    counterLoser: attacker.name,
-                    roomState: room
-                });
-            } else {
-                // กรณีสวนกลับแพ้/เสมอ (รับดาเมจเต็มของฝ่ายโจมตี)
-                target.hp = Math.max(0, target.hp - totalAttackerRoll);
+            // เปรียบเทียบกับลูกเต๋าโจมตีทีละลูก
+            attackInfo.attackerRolls.forEach(attDice => {
+                if (attDice > counterDefRoll) {
+                    // แพ้เต๋าลูกนี้ -> รับดาเมจลูกนี้เต็มๆ
+                    damageToTarget += attDice;
+                } else if (counterDefRoll > attDice) {
+                    // ชนะเต๋าลูกนี้ -> สวนกลับ = (ดาเมจสวนกลับพื้นฐาน + ครึ่งหนึ่งของเต๋าลูกนี้ ปัดลง)
+                    damageToAttacker += counterDamageBase + Math.floor(attDice / 2);
+                }
+                // ถ้าเท่ากัน (เสมอ) ไม่เกิดอะไรขึ้นกับเต๋าลูกนั้น
+            });
 
-                io.to(socket.roomCode).emit('battle_result', {
-                    attackerName: attacker.name,
-                    targetName: target.name,
-                    attackerRolls: attackInfo.attackerRolls,
-                    targetRoll: counterVal,
-                    damage: totalAttackerRoll,
-                    isCounterFailed: true,
-                    roomState: room
-                });
-            }
+            // หัก HP ของทั้งสองฝ่าย
+            target.hp = Math.max(0, target.hp - damageToTarget);
+            attacker.hp = Math.max(0, attacker.hp - damageToAttacker);
+
+            io.to(socket.roomCode).emit('battle_result', {
+                isCounterBattle: true,
+                attackerName: attacker.name,
+                targetName: target.name,
+                attackerRolls: attackInfo.attackerRolls,
+                counterDefRoll: counterDefRoll,
+                counterDamageBase: counterDamageBase,
+                damageToTarget: damageToTarget,
+                damageToAttacker: damageToAttacker,
+                roomState: room
+            });
 
             room.pendingAttack = null;
             checkWinCondition(room);
@@ -336,12 +338,14 @@ io.on('connection', (socket) => {
         }
 
         // --- คำนวณการโจมตี/ป้องกันปกติ ---
+        const totalAttackerRoll = attackInfo.attackerRolls.reduce((a, b) => a + b, 0);
         let damage = totalAttackerRoll - targetRoll;
         if (damage < 0) damage = 0;
 
         target.hp = Math.max(0, target.hp - damage);
 
         io.to(socket.roomCode).emit('battle_result', {
+            isCounterBattle: false,
             attackerName: attacker.name,
             targetName: target.name,
             attackerRolls: attackInfo.attackerRolls,
@@ -389,22 +393,15 @@ io.on('connection', (socket) => {
 
 function generateDeck() {
     let deck = [];
-    // การ์ดโจมตี/ป้องกัน แบบทอยเต๋าสุ่ม (12 ใบ)
     for (let i = 0; i < 12; i++) {
         deck.push({ id: `atk_${i}`, name: '🎲 การ์ดสุ่มเต๋า', type: 'attack_defend' });
     }
-
-    // การ์ดแต้มคงที่ 1 ถึง 6 (อย่างละ 1 ใบ)
     for (let val = 1; val <= 6; val++) {
         deck.push({ id: `fixed_${val}`, name: `🎯 การ์ดแต้มล็อค [${val}]`, type: 'fixed_value', value: val });
     }
-
-    // การ์ดสวนกลับ (5 ใบ)
     for (let i = 0; i < 5; i++) {
         deck.push({ id: 'counter_' + i, name: '⚔️ การ์ดสวนกลับ', type: 'counter_attack' });
     }
-
-    // การ์ดเวทมนตร์ (อย่างละ 1 ใบ)
     deck.push({ id: 'magic_1', name: '🪄 เวท: เร่งพลังงาน', type: 'double_energy' });
     deck.push({ id: 'magic_2', name: '🔮 เวท: คำสาปไร้เกราะ', type: 'block_defense' });
 
