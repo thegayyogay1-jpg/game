@@ -4,36 +4,102 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Card Game Party</title>
-    <!-- ใช้ CDN Socket.io -->
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <style>
-        body { font-family: sans-serif; background: #222; color: #fff; text-align: center; padding: 20px; }
-        .box { background: #333; padding: 20px; border-radius: 8px; max-width: 450px; margin: 20px auto; }
-        input, button { padding: 10px; margin: 5px; font-size: 16px; }
-        button { cursor: pointer; background: #ff4757; color: white; border: none; border-radius: 4px; }
+        * { box-sizing: border-box; }
+        body { font-family: sans-serif; background: #1a1a1a; color: #fff; text-align: center; margin: 0; padding: 10px; }
+        .box { background: #2a2a2a; padding: 15px; border-radius: 8px; max-width: 450px; margin: 15px auto; border: 1px solid #444; }
+        input, button { padding: 10px; margin: 5px; font-size: 15px; border-radius: 4px; border: none; }
+        button { cursor: pointer; background: #ff4757; color: white; transition: 0.2s; }
         button:hover { background: #ff6b81; }
-        .card { display: inline-block; background: #fff; color: #000; padding: 15px; margin: 5px; border-radius: 5px; width: 100px; }
-        .target-card { background: #444; border: 2px solid #555; padding: 10px; margin: 5px; border-radius: 5px; display: inline-block; }
-        .flashing { border: 2px dashed #ffa502 !important; animation: glow 0.8s infinite alternate; cursor: pointer; }
-        @keyframes glow { from { border-color: #ffa502; box-shadow: 0 0 5px #ffa502; } to { border-color: #ff4757; box-shadow: 0 0 15px #ff4757; } }
-        
-        /* ซ่อน Element ทั่วไป */
-        .hidden { display: none !important; }
-        
-        /* Modal Overlay ตั้งค่าเริ่มต้นเป็นซ่อนไว้ */
-        #modal-overlay { 
-            position: fixed; 
-            top: 0; 
-            left: 0; 
-            width: 100%; 
-            height: 100%; 
-            background: rgba(0,0,0,0.8); 
-            display: none; 
-            justify-content: center; 
-            align-items: center; 
-            z-index: 999; 
+        button:disabled { background: #555; cursor: not-allowed; }
+
+        /* โต๊ะเกมทรงกลม */
+        .table-container {
+            position: relative;
+            width: 90vw;
+            max-width: 650px;
+            height: 90vw;
+            max-height: 650px;
+            margin: 10px auto;
+            border-radius: 50%;
+            background: radial-gradient(circle, #2e5233 0%, #172d1a 100%);
+            border: 10px solid #4a2e18;
+            box-shadow: 0 0 20px rgba(0,0,0,0.8);
         }
-        .modal-content { background: #222; padding: 30px; border-radius: 10px; border: 2px solid #ff4757; width: 350px; text-align: center; }
+
+        /* กองไพ่ตรงกลาง */
+        .center-deck {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 100px;
+            height: 130px;
+            background: #2b3a42;
+            border: 3px solid #ff4757;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            transition: transform 0.1s;
+        }
+        .center-deck:active { transform: translate(-50%, -50%) scale(0.95); }
+
+        /* การจัดวางตำแหน่งผู้เล่นรอบโต๊ะ */
+        .player-node {
+            position: absolute;
+            width: 110px;
+            background: rgba(0, 0, 0, 0.75);
+            padding: 8px;
+            border-radius: 8px;
+            border: 2px solid #555;
+            transform: translate(-50%, -50%);
+        }
+        .player-node.active-turn { border-color: #2ed573; box-shadow: 0 0 10px #2ed573; }
+        .targetable { border-color: #ffa502 !important; animation: glow 0.8s infinite alternate; cursor: pointer; }
+
+        /* การ์ดในมือ */
+        .card {
+            display: inline-block;
+            background: #fff;
+            color: #000;
+            padding: 8px;
+            margin: 4px;
+            border-radius: 6px;
+            width: 80px;
+            border: 3px solid transparent;
+            cursor: pointer;
+            user-select: none;
+        }
+        .card.selected { border-color: #ff4757; background: #ffeaa7; transform: translateY(-5px); }
+
+        /* ลูกเต๋า */
+        .dice {
+            display: inline-block;
+            width: 50px;
+            height: 50px;
+            background: #fff;
+            color: #000;
+            font-size: 28px;
+            line-height: 50px;
+            font-weight: bold;
+            border-radius: 8px;
+            margin: 5px;
+            box-shadow: 0 3px 6px rgba(0,0,0,0.4);
+        }
+
+        .hidden { display: none !important; }
+        #modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85); display: none;
+            justify-content: center; align-items: center; z-index: 999;
+        }
+        .modal-content { background: #222; padding: 25px; border-radius: 12px; border: 2px solid #ff4757; width: 320px; }
+        @keyframes glow { from { border-color: #ffa502; } to { border-color: #ff4757; } }
     </style>
 </head>
 <body>
@@ -56,24 +122,23 @@
     </div>
 
     <div id="game-screen" class="hidden">
-        <h2 id="turn-info">ตาของใครบางคน</h2>
-        <div class="box">
-            <h3>สถานะของคุณ</h3>
-            <p>HP: <span id="my-hp">100</span> | Energy: <span id="my-energy">5</span></p>
+        <h2 id="turn-info">ตาของ...</h2>
+        
+        <div class="table-container" id="game-table">
+            <div class="center-deck" onclick="drawCard()">
+                <b>🎴 กองการ์ด</b>
+                <span style="font-size: 11px; color: #aaa; margin-top:4px;">(จั่ว -1 Energy)</span>
+            </div>
+            <!-- รายชื่อผู้เล่นจะถูกแทรกที่นี่ด้วย JS -->
         </div>
 
         <div class="box">
-            <h3>การ์ดในมือ (สูงสุด 3 ใบ)</h3>
-            <button onclick="drawCard()">จั่วการ์ด (ใช้ 1 Energy)</button>
+            <h3>สถานะ: HP <span id="my-hp">100</span> | Energy <span id="my-energy">5</span></h3>
+            <h3>การ์ดในมือ (เลือกได้สูงสุด 2 ใบเพื่อโจมตี)</h3>
             <div id="hand-cards"></div>
+            <p id="attack-hint" style="font-size: 13px; color: #ffa502;"></p>
+            <button onclick="endTurn()" style="background: #2ed573;">จบเทิร์น</button>
         </div>
-
-        <div class="box">
-            <h3>ผู้เล่นคนอื่น (คลิกที่เป้าหมายเพื่อโจมตี - ใช้ 3 Energy)</h3>
-            <div id="target-list"></div>
-        </div>
-
-        <button onclick="endTurn()" style="background: #2ed573;">จบเทิร์น</button>
     </div>
 
     <div id="modal-overlay">
@@ -84,10 +149,10 @@
         const socket = io();
         let myId = '';
         let currentRoomData = null;
-        let selectedCardIndexForAttack = null;
+        let selectedCards = []; // เก็บ Index การ์ดที่เลือกไว้โจมตี
 
         socket.on('connect', () => { myId = socket.id; });
-        socket.on('error_message', (msg) => { alert(msg); });
+        socket.on('error_message', (msg) => alert(msg));
 
         function createRoom() {
             const name = document.getElementById('playerName').value;
@@ -107,18 +172,13 @@
             document.getElementById('lobby-screen').classList.add('hidden');
             document.getElementById('waiting-screen').classList.remove('hidden');
             document.getElementById('room-title').innerText = `ห้อง: ${document.getElementById('roomCode').value}`;
-            
-            if (room.host === myId) {
-                document.getElementById('start-btn').classList.remove('hidden');
-            }
+            if (room.host === myId) document.getElementById('start-btn').classList.remove('hidden');
         });
 
         socket.on('update_room', (room) => {
             currentRoomData = room;
             updateWaitingRoom(room);
-            if(room.gameStarted) {
-                updateGameUI(room);
-            }
+            if(room.gameStarted) updateGameUI(room);
         });
 
         function updateWaitingRoom(room) {
@@ -138,46 +198,53 @@
         });
 
         function drawCard() { socket.emit('draw_card'); }
-        function endTurn() { socket.emit('end_turn'); }
+        function endTurn() { 
+            selectedCards = [];
+            socket.emit('end_turn'); 
+        }
 
-        function selectCardToAttack(index) {
+        // จัดการคลิกเลือกการ์ดในมือ
+        function toggleSelectCard(index) {
+            const me = currentRoomData.players.find(p => p.id === myId);
             const currentTurnPlayer = currentRoomData.players[currentRoomData.currentTurnIndex];
-            if(currentTurnPlayer.id !== myId) {
-                return alert('ยังไม่ใช่ตาของคุณ!');
-            }
-            if(currentTurnPlayer.energy < 3) {
-                return alert('Energy ไม่พอ (ต้องการ 3)');
+            
+            if(currentTurnPlayer.id !== myId) return alert('ยังไม่ใช่ตาของคุณ!');
+
+            const pos = selectedCards.indexOf(index);
+            if (pos > -1) {
+                selectedCards.splice(pos, 1);
+            } else {
+                if (selectedCards.length >= 2) return alert('เลือกการ์ดโจมตีได้สูงสุด 2 ใบเท่านั้น');
+                selectedCards.push(index);
             }
 
-            selectedCardIndexForAttack = index;
-            alert('เลือกการ์ดแล้ว! ตอนนี้ให้คลิกที่กรอบของเพื่อนด้านล่างเพื่อเลือกเป้าหมายที่จะโจมตี');
-            
-            document.querySelectorAll('.target-card').forEach(el => {
-                el.classList.add('flashing');
-            });
+            const cost = selectedCards.length === 2 ? 5 : (selectedCards.length === 1 ? 3 : 0);
+            const hint = document.getElementById('attack-hint');
+            if(selectedCards.length > 0) {
+                hint.innerText = `เลือกแล้ว ${selectedCards.length} ใบ (ใช้ ${cost} Energy) -> คลิกเลือกเป้าหมายบนโต๊ะ`;
+            } else {
+                hint.innerText = '';
+            }
+
+            updateHandUI(me);
+            updateTableUI(currentRoomData);
         }
 
         function targetPlayer(targetId) {
-            if (selectedCardIndexForAttack === null) {
-                return alert('กรุณากดเลือก "ใช้โจมตี" ที่การ์ดในมือก่อน!');
-            }
+            if (selectedCards.length === 0) return alert('กรุณาคลิกเลือกการ์ดในมือก่อน!');
+            
+            const cost = selectedCards.length === 2 ? 5 : 3;
+            const me = currentRoomData.players.find(p => p.id === myId);
+            if (me.energy < cost) return alert(`Energy ไม่พอ (ต้องการ ${cost})`);
 
-            socket.emit('initiate_attack', { targetId: targetId, cardIndex: selectedCardIndexForAttack });
-            selectedCardIndexForAttack = null;
-
-            document.querySelectorAll('.target-card').forEach(el => {
-                el.classList.remove('flashing');
-            });
+            socket.emit('initiate_attack', { targetId, cardIndices: selectedCards });
+            selectedCards = [];
+            document.getElementById('attack-hint').innerText = '';
         }
 
-        // ฟังก์ชันช่วย เปิด-ปิด Modal ผ่าน Display Style Direct
-        function showModal() {
-            document.getElementById('modal-overlay').style.display = 'flex';
-        }
-
-        function hideModal() {
-            document.getElementById('modal-overlay').style.display = 'none';
-        }
+        // ระบบ Modal การแสดงผล
+        function showModal() { document.getElementById('modal-overlay').style.display = 'flex'; }
+        function hideModal() { document.getElementById('modal-overlay').style.display = 'none'; }
 
         socket.on('defend_prompt', (data) => {
             const modalBody = document.getElementById('modal-body');
@@ -188,16 +255,16 @@
                 const cardIndex = me.hand.findIndex(c => c.name === 'การ์ดโจมตี/ป้องกัน');
 
                 modalBody.innerHTML = `
-                    <h3>⚠️ คุณถูก ${data.attackerName} โจมตี!</h3>
-                    <p>คุณมี "การ์ดป้องกัน" ในมือ จะใช้ไหม?</p>
+                    <h3>⚠️ ถูก ${data.attackerName} โจมตีด้วยการ์ด ${data.cardCount} ใบ!</h3>
+                    <p>คุณมี "การ์ดป้องกัน" จะใช้ป้องกันหรือไม่?</p>
                     <button onclick="useDefense(${cardIndex})" style="background:#2ed573;">ใช้การ์ดป้องกัน</button>
-                    <button onclick="skipDefense()">ไม่มี / ไม่ใช้</button>
+                    <button onclick="skipDefense()">ยอมรับการโจมตี</button>
                 `;
             } else {
                 modalBody.innerHTML = `
-                    <h3>⚠️ คุณถูก ${data.attackerName} โจมตี!</h3>
+                    <h3>⚠️ ถูก ${data.attackerName} โจมตี!</h3>
                     <p style="color:#ff4757;">คุณไม่มีการ์ดป้องกันในมือ</p>
-                    <button onclick="skipDefense()">ปิด / ยอมรับชะตากรรม</button>
+                    <button onclick="skipDefense()">รับการโจมตี</button>
                 `;
             }
         });
@@ -212,25 +279,82 @@
             socket.emit('skip_defense');
         }
 
+        // ทอยเต๋าฝั่งโจมตี
         socket.on('request_attacker_roll', (data) => {
             const modalBody = document.getElementById('modal-body');
             showModal();
 
+            let diceHTML = '';
+            for(let i = 0; i < data.cardCount; i++) {
+                diceHTML += `<div class="dice" id="att-dice-${i}">?</div>`;
+            }
+
             modalBody.innerHTML = `
-                <h3>🎲 ตาของคุณโจมตี!</h3>
-                <p>กดปุ่มด้านล่างเพื่อทอยเต๋าโจมตี</p>
-                <button onclick="rollDiceAndSubmit('${data.targetId}', ${data.hasDefenderRolled})" style="background:#ffa502; color:#000; font-weight:bold;">ทอยเต๋า (1-6)</button>
+                <h3>🎲 ทอยเต๋าโจมตี (${data.cardCount} ลูก)</h3>
+                <div>${diceHTML}</div><br>
+                <button id="roll-btn" onclick="animateAndRollAttacker(${data.cardCount})" style="background:#ffa502; color:#000; font-weight:bold;">เริ่มทอยเต๋า!</button>
             `;
         });
 
-        function rollDiceAndSubmit(targetId, hasDefenderRolled) {
-            const attackerRoll = Math.floor(Math.random() * 6) + 1;
-            hideModal();
-            socket.emit('submit_attacker_roll', { targetId, attackerRoll, hasDefenderRolled });
+        function animateAndRollAttacker(count) {
+            document.getElementById('roll-btn').disabled = true;
+            let rolls = [];
+            let counter = 0;
+
+            const interval = setInterval(() => {
+                for(let i = 0; i < count; i++) {
+                    document.getElementById(`att-dice-${i}`).innerText = Math.floor(Math.random() * 6) + 1;
+                }
+                counter++;
+                if(counter > 12) {
+                    clearInterval(interval);
+                    for(let i = 0; i < count; i++) {
+                        const finalVal = Math.floor(Math.random() * 6) + 1;
+                        document.getElementById(`att-dice-${i}`).innerText = finalVal;
+                        rolls.push(finalVal);
+                    }
+                    setTimeout(() => {
+                        hideModal();
+                        socket.emit('submit_attacker_roll', { rolls });
+                    }, 800);
+                }
+            }, 80);
+        }
+
+        // ทอยเต๋าฝั่งป้องกัน
+        socket.on('request_defender_roll', () => {
+            const modalBody = document.getElementById('modal-body');
+            showModal();
+
+            modalBody.innerHTML = `
+                <h3>🛡️ ทอยเต๋าป้องกัน!</h3>
+                <div><div class="dice" id="def-dice">?</div></div><br>
+                <button id="roll-def-btn" onclick="animateAndRollDefender()" style="background:#2ed573; color:#000; font-weight:bold;">ทอยเต๋าลดดาเมจ!</button>
+            `;
+        });
+
+        function animateAndRollDefender() {
+            document.getElementById('roll-def-btn').disabled = true;
+            let counter = 0;
+
+            const interval = setInterval(() => {
+                document.getElementById('def-dice').innerText = Math.floor(Math.random() * 6) + 1;
+                counter++;
+                if(counter > 12) {
+                    clearInterval(interval);
+                    const finalVal = Math.floor(Math.random() * 6) + 1;
+                    document.getElementById('def-dice').innerText = finalVal;
+                    setTimeout(() => {
+                        hideModal();
+                        socket.emit('submit_defender_roll', { roll: finalVal });
+                    }, 800);
+                }
+            }, 80);
         }
 
         socket.on('battle_result', (data) => {
-            alert(`⚔️ ผลการต่อสู้ (${data.attackerName} vs ${data.targetName})\nผู้โจมตีทอยได้: ${data.attackerRoll}\nฝ่ายป้องกันทอยได้: ${data.targetRoll}\n💥 ดาเมจสุทธิเข้าตัว: ${data.damage}`);
+            const attRollStr = data.attackerRolls.join(' + ');
+            alert(`⚔️ ผลการต่อสู้ (${data.attackerName} vs ${data.targetName})\n🎲 โจมตีทอยได้: ${attRollStr}\n🛡️ ป้องกันทอยได้: ${data.targetRoll}\n💥 ดาเมจสุทธิ: ${data.damage}`);
             updateGameUI(data.roomState);
         });
 
@@ -247,25 +371,64 @@
             document.getElementById('my-hp').innerText = me.hp;
             document.getElementById('my-energy').innerText = me.energy;
 
-            const handDiv = document.getElementById('hand-cards');
-            handDiv.innerHTML = '';
-            me.hand.forEach((card, index) => {
-                handDiv.innerHTML += `<div class="card"><b>${card.name}</b><br>DMG: ${card.baseDamage}<br><button onclick="selectCardToAttack(${index})" style="padding:5px; font-size:11px; margin-top:5px; background:#ff4757;">ใช้โจมตี</button></div>`;
-            });
-
             const currentTurnPlayer = room.players[room.currentTurnIndex];
             document.getElementById('turn-info').innerText = currentTurnPlayer.id === myId ? "🟢 ตาของคุณแล้ว!" : `⏳ ตาของ ${currentTurnPlayer.name}`;
 
-            const targetDiv = document.getElementById('target-list');
-            targetDiv.innerHTML = '';
-            room.players.forEach(p => {
-                if(p.id !== myId && p.hp > 0) {
-                    targetDiv.innerHTML += `
-                        <div class="target-card" id="target-${p.id}" onclick="targetPlayer('${p.id}')">
-                            <b>${p.name}</b><br>HP: ${p.hp}
-                        </div>
-                    `;
-                }
+            updateHandUI(me);
+            updateTableUI(room);
+        }
+
+        function updateHandUI(me) {
+            const handDiv = document.getElementById('hand-cards');
+            handDiv.innerHTML = '';
+            me.hand.forEach((card, index) => {
+                const isSelected = selectedCards.includes(index) ? 'selected' : '';
+                handDiv.innerHTML += `
+                    <div class="card ${isSelected}" onclick="toggleSelectCard(${index})">
+                        <b>${card.name}</b><br>DMG: ${card.baseDamage}
+                    </div>
+                `;
+            });
+        }
+
+        // วาดตำแหน่งผู้เล่นรอบโต๊ะเป็นวงกลม
+        function updateTableUI(room) {
+            const table = document.getElementById('game-table');
+            // ลบ Node เก่าออกทั้งหมดยกเว้นกองการ์ด
+            document.querySelectorAll('.player-node').forEach(e => e.remove());
+
+            const players = room.players;
+            const total = players.length;
+            const currentTurnPlayer = players[room.currentTurnIndex];
+
+            // คำนวณลำดับตำแหน่งโดยให้ผู้เล่นปัจจุบันอยู่ล่างสุดเสมอ
+            const myIndex = players.findIndex(p => p.id === myId);
+
+            players.forEach((p, i) => {
+                // คำนวณมุมบนวงกลม (เรียงลำดับตามเข็มนาฬิกา)
+                const relativeIndex = (i - myIndex + total) % total;
+                const angle = (relativeIndex / total) * 2 * Math.PI + (Math.PI / 2); 
+                
+                // คำนวณพิกัด X, Y บนเปอร์เซ็นต์ของวงกลม
+                const radius = 38; // ระยะห่างจากจุดศูนย์กลาง (%)
+                const x = 50 + radius * Math.cos(angle);
+                const y = 50 + radius * Math.sin(angle);
+
+                const isTurn = p.id === currentTurnPlayer.id ? 'active-turn' : '';
+                const isTargetable = (selectedCards.length > 0 && p.id !== myId && p.hp > 0) ? 'targetable' : '';
+
+                const node = document.createElement('div');
+                node.className = `player-node ${isTurn} ${isTargetable}`;
+                node.style.left = `${x}%`;
+                node.style.top = `${y}%`;
+                if(isTargetable) node.onclick = () => targetPlayer(p.id);
+
+                node.innerHTML = `
+                    <div style="font-size:13px; font-weight:bold;">${p.name}</div>
+                    <div style="font-size:11px; color:#ff4757;">HP: ${p.hp}</div>
+                    <div style="font-size:10px; color:#2ed573;">NRG: ${p.energy}</div>
+                `;
+                table.appendChild(node);
             });
         }
     </script>
