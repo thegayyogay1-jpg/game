@@ -19,7 +19,10 @@ io.on('connection', (socket) => {
         if (rooms[roomCode]) return socket.emit('error_message', 'มีรหัสห้องนี้อยู่แล้ว!');
         rooms[roomCode] = {
             host: socket.id,
-            players: [{ id: socket.id, name: playerName, hp: 100, energy: 5, hand: [], deck: generateDeck() }],
+            players: [{ 
+                id: socket.id, name: playerName, hp: 100, energy: 5, hand: [], deck: generateDeck(),
+                doubleEnergyTurns: 0, lowEnergyTurns: 0, isDefenseBlocked: false 
+            }],
             currentTurnIndex: 0,
             gameStarted: false,
             pendingAttack: null
@@ -36,7 +39,10 @@ io.on('connection', (socket) => {
         if (room.players.length >= 8) return socket.emit('error_message', 'ห้องเต็มแล้ว!');
         if (room.players.some(p => p.name === playerName)) return socket.emit('error_message', 'ชื่อซ้ำ!');
 
-        room.players.push({ id: socket.id, name: playerName, hp: 100, energy: 5, hand: [], deck: generateDeck() });
+        room.players.push({ 
+            id: socket.id, name: playerName, hp: 100, energy: 5, hand: [], deck: generateDeck(),
+            doubleEnergyTurns: 0, lowEnergyTurns: 0, isDefenseBlocked: false 
+        });
         socket.join(roomCode);
         socket.roomCode = roomCode;
         socket.emit('room_joined', room);
@@ -71,7 +77,30 @@ io.on('connection', (socket) => {
         io.to(socket.roomCode).emit('update_room', room);
     });
 
-    // โจมตีโดยระบุรายการ Index ของการ์ด (1 หรือ 2 ใบ)
+    // ใช้นักเวทมนตร์
+    socket.on('use_magic_card', ({ targetId, cardIndex }) => {
+        const room = rooms[socket.roomCode];
+        if (!room) return;
+        const caster = room.players.find(p => p.id === socket.id);
+        const target = room.players.find(p => p.id === targetId);
+
+        if (caster.energy < 2) return socket.emit('error_message', 'Energy ไม่พอสำหรับใช้การ์ดเวทมนตร์ (ต้องการ 2)');
+
+        const card = caster.hand.splice(cardIndex, 1)[0];
+        caster.energy -= 2;
+
+        if (card.type === 'double_energy') {
+            target.doubleEnergyTurns = 1; // ส่งผลในเทิร์นหน้าของเป้าหมาย
+            socket.emit('alert_message', `🪄 ใช้การ์ดเวทมนตร์ "เร่งพลังงาน" ใส่ ${target.name} เรียบร้อย!`);
+        } else if (card.type === 'block_defense') {
+            target.isDefenseBlocked = true; // ล็อคไม่ให้ป้องกันแบบลับๆ
+            socket.emit('alert_message', `🔮 ร่ายคำสาป "บล็อคการป้องกัน" ใส่ ${target.name} เรียบร้อย! (เป้าหมายจะไม่รู้ตัว)`);
+        }
+
+        io.to(socket.roomCode).emit('update_room', room);
+    });
+
+    // โจมตี
     socket.on('initiate_attack', ({ targetId, cardIndices }) => {
         const room = rooms[socket.roomCode];
         if (!room) return;
@@ -81,13 +110,8 @@ io.on('connection', (socket) => {
         const attackCost = cardIndices.length === 2 ? 5 : 3;
         if (attacker.energy < attackCost) return socket.emit('error_message', `Energy ไม่พอ (ต้องการ ${attackCost})`);
 
-        // ทิ้งการ์ดที่ถูกเลือกใช้งาน
         cardIndices.sort((a, b) => b - a);
-        const usedCards = [];
-        cardIndices.forEach(idx => {
-            usedCards.push(attacker.hand.splice(idx, 1)[0]);
-        });
-
+        cardIndices.forEach(idx => attacker.hand.splice(idx, 1));
         attacker.energy -= attackCost;
 
         room.pendingAttack = {
@@ -98,12 +122,19 @@ io.on('connection', (socket) => {
             targetRoll: 0
         };
 
-        const hasDefenseCard = target.hand.some(c => c.name === 'การ์ดโจมตี/ป้องกัน');
-        io.to(target.id).emit('defend_prompt', {
-            attackerName: attacker.name,
-            hasDefenseCard,
-            cardCount: cardIndices.length
-        });
+        // ตรวจสอบคำสาปบล็อคป้องกัน
+        if (target.isDefenseBlocked) {
+            target.isDefenseBlocked = false; // ปลดบัฟออกเมื่อทำงาน
+            // โดนเซอร์ไพรส์! ข้ามเฟสป้องกัน ให้ผู้โจมตีทอยเต๋าเพียวๆ
+            startDicePhase(room, false);
+        } else {
+            const hasDefenseCard = target.hand.some(c => c.type === 'attack_defend');
+            io.to(target.id).emit('defend_prompt', {
+                attackerName: attacker.name,
+                hasDefenseCard,
+                cardCount: cardIndices.length
+            });
+        }
 
         io.to(socket.roomCode).emit('update_room', room);
     });
@@ -129,7 +160,6 @@ io.on('connection', (socket) => {
         const attackInfo = room.pendingAttack;
         attackInfo.isDefending = isDefending;
 
-        // สั่งให้ผู้โจมตีทอยเต๋าก่อน
         io.to(attackInfo.attackerId).emit('request_attacker_roll', {
             targetId: attackInfo.targetId,
             cardCount: attackInfo.cardCount
@@ -142,10 +172,8 @@ io.on('connection', (socket) => {
         room.pendingAttack.attackerRolls = rolls;
 
         if (room.pendingAttack.isDefending) {
-            // ส่งต่อให้ฝ่ายป้องกันทอยเต๋าหักล้าง
             io.to(room.pendingAttack.targetId).emit('request_defender_roll');
         } else {
-            // ฝ่ายป้องกันไม่ได้ใช้การ์ดป้องกัน (ถือว่าทอยได้ 0)
             finalizeBattle(room, 0);
         }
     });
@@ -162,7 +190,9 @@ io.on('connection', (socket) => {
         const target = room.players.find(p => p.id === attackInfo.targetId);
 
         const totalAttackerRoll = attackInfo.attackerRolls.reduce((a, b) => a + b, 0);
-        let damage = (1 * attackInfo.cardCount) + totalAttackerRoll - targetRoll;
+        
+        // คำนวณแบบเอาลูกเต๋าลบกันตรงๆ
+        let damage = totalAttackerRoll - targetRoll;
         if (damage < 0) damage = 0;
 
         target.hp = Math.max(0, target.hp - damage);
@@ -184,10 +214,26 @@ io.on('connection', (socket) => {
         const room = rooms[socket.roomCode];
         if (!room) return;
 
+        const currentPlayer = room.players[room.currentTurnIndex];
+        // หากเทิร์นก่อนหน้าได้เอนเนอร์จี้ล้นมา ให้ตัดเหลือไม่เกิน 5 เมื่อจบเทิร์นนั้น
+        if (currentPlayer.energy > 5) {
+            currentPlayer.energy = 5;
+        }
+
         room.currentTurnIndex = (room.currentTurnIndex + 1) % room.players.length;
         const nextPlayer = room.players[room.currentTurnIndex];
-        // เพิ่ม Energy รอบละ +3 แต่สะสมไม่เกิน 5
-        nextPlayer.energy = Math.min(5, nextPlayer.energy + 3);
+
+        // คำนวณระบบเวทมนตร์ Energy ในเทิร์นถัดไป
+        if (nextPlayer.doubleEnergyTurns > 0) {
+            nextPlayer.energy += 6; // ทะลุเพดาน Max 5 ได้
+            nextPlayer.doubleEnergyTurns = 0;
+            nextPlayer.lowEnergyTurns = 1; // ตั้งค่าให้เทิร์นถัดไปโดนลดเหลือ +1
+        } else if (nextPlayer.lowEnergyTurns > 0) {
+            nextPlayer.energy = Math.min(5, nextPlayer.energy + 1);
+            nextPlayer.lowEnergyTurns = 0;
+        } else {
+            nextPlayer.energy = Math.min(5, nextPlayer.energy + 3);
+        }
 
         io.to(socket.roomCode).emit('update_room', room);
     });
@@ -197,10 +243,14 @@ io.on('connection', (socket) => {
 
 function generateDeck() {
     let deck = [];
-    for (let i = 0; i < 20; i++) {
-        deck.push({ id: i, name: 'การ์ดโจมตี/ป้องกัน', baseDamage: 1 });
+    for (let i = 0; i < 16; i++) {
+        deck.push({ id: `atk_${i}`, name: 'การ์ดโจมตี/ป้องกัน', type: 'attack_defend' });
     }
-    return deck;
+    deck.push({ id: 'magic_1', name: '🪄 เวท: เร่งพลังงาน', type: 'double_energy' });
+    deck.push({ id: 'magic_2', name: '🔮 เวท: คำสาปไร้เกราะ', type: 'block_defense' });
+
+    // สลับไพ่ในกอง
+    return deck.sort(() => Math.random() - 0.5);
 }
 
 function checkWinCondition(room) {
