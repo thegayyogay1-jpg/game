@@ -176,12 +176,17 @@
             updateGameUI(room);
         });
 
-        function drawCard() { socket.emit('draw_card'); }
-        function endTurn() { 
-            selectedCards = [];
-            selectedMagicCardIndex = null;
-            socket.emit('end_turn'); 
-        }
+        function drawCard() { 
+    // ตรวจสอบว่ามีข้อมูลห้อง และผู้เล่นปัจจุบันเป็นคนเดียวกับเราหรือไม่
+    if (!currentRoomData) return;
+    const currentTurnPlayer = currentRoomData.players[currentRoomData.currentTurnIndex];
+    
+    if (currentTurnPlayer.id !== myId) {
+        return alert('ยังไม่ใช่ตาของคุณ!');
+    }
+    
+    socket.emit('draw_card'); 
+    }
 
         function toggleSelectCard(index, type) {
             const currentTurnPlayer = currentRoomData.players[currentRoomData.currentTurnIndex];
