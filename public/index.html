@@ -62,6 +62,13 @@
         .card.fixed { background: #74b9ff; color: #000; font-weight: bold; }
         .card.selected { border-color: #ff4757; background: #ffeaa7; color:#000; transform: translateY(-5px); }
 
+        .def-card-opt {
+            display: block; width: 100%; margin: 6px 0; padding: 10px;
+            border-radius: 6px; font-weight: bold; text-align: center;
+        }
+        .def-card-opt.random { background: #fff; color: #000; }
+        .def-card-opt.fixed { background: #74b9ff; color: #000; }
+
         .dice {
             display: inline-block; width: 50px; height: 50px;
             background: #fff; color: #000; font-size: 28px;
@@ -75,7 +82,7 @@
             background: rgba(0,0,0,0.85); display: none;
             justify-content: center; align-items: center; z-index: 999;
         }
-        .modal-content { background: #222; padding: 25px; border-radius: 12px; border: 2px solid #ff4757; width: 330px; }
+        .modal-content { background: #222; padding: 25px; border-radius: 12px; border: 2px solid #ff4757; width: 340px; }
         @keyframes glow { from { border-color: #ffa502; } to { border-color: #ff4757; } }
     </style>
 </head>
@@ -109,7 +116,7 @@
         </div>
 
         <div class="box">
-            <h3>สถานะ: HP <span id="my-hp">15</span> | Energy <span id="my-energy">5</span></h3>
+            <h3>สถานะ: HP <span id="my-hp">100</span> | Energy <span id="my-energy">5</span></h3>
             <h3>การ์ดในมือ</h3>
             <div id="hand-cards"></div>
             <p id="attack-hint" style="font-size: 13px; color: #ffa502;"></p>
@@ -177,16 +184,17 @@
         });
 
         function drawCard() { 
-    // ตรวจสอบว่ามีข้อมูลห้อง และผู้เล่นปัจจุบันเป็นคนเดียวกับเราหรือไม่
-    if (!currentRoomData) return;
-    const currentTurnPlayer = currentRoomData.players[currentRoomData.currentTurnIndex];
-    
-    if (currentTurnPlayer.id !== myId) {
-        return alert('ยังไม่ใช่ตาของคุณ!');
-    }
-    
-    socket.emit('draw_card'); 
-    }
+            if (!currentRoomData) return;
+            const currentTurnPlayer = currentRoomData.players[currentRoomData.currentTurnIndex];
+            if (currentTurnPlayer.id !== myId) return alert('ยังไม่ใช่ตาของคุณ!');
+            socket.emit('draw_card'); 
+        }
+
+        function endTurn() { 
+            selectedCards = [];
+            selectedMagicCardIndex = null;
+            socket.emit('end_turn'); 
+        }
 
         function toggleSelectCard(index, type) {
             const currentTurnPlayer = currentRoomData.players[currentRoomData.currentTurnIndex];
@@ -244,7 +252,6 @@
         function showModal() { document.getElementById('modal-overlay').style.display = 'flex'; }
         function hideModal() { document.getElementById('modal-overlay').style.display = 'none'; }
 
-        // ป๊อปอัพโดนคำสาปไร้เกราะ
         socket.on('curse_blocked_alert', (data) => {
             const modalBody = document.getElementById('modal-body');
             showModal();
@@ -256,20 +263,33 @@
             `;
         });
 
+        // แสดงรายการการ์ดป้องกันให้เลือกใช้
         socket.on('defend_prompt', (data) => {
             const modalBody = document.getElementById('modal-body');
             showModal();
 
             if (data.hasDefenseCard) {
                 const me = currentRoomData.players.find(p => p.id === myId);
-                const cardIndex = me.hand.findIndex(c => c.type === 'attack_defend' || c.type === 'fixed_value');
-                const card = me.hand[cardIndex];
+                
+                let cardsListHTML = '';
+                me.hand.forEach((card, idx) => {
+                    if (card.type === 'attack_defend' || card.type === 'fixed_value') {
+                        const optClass = card.type === 'fixed_value' ? 'fixed' : 'random';
+                        cardsListHTML += `
+                            <button class="def-card-opt ${optClass}" onclick="useDefense(${idx})">
+                                🛡️ ใช้: ${card.name}
+                            </button>
+                        `;
+                    }
+                });
 
                 modalBody.innerHTML = `
                     <h3>⚠️ ถูก ${data.attackerName} โจมตี!</h3>
-                    <p>คุณมี <b>"${card.name}"</b> จะใช้ป้องกันหรือไม่?</p>
-                    <button onclick="useDefense(${cardIndex})" style="background:#2ed573;">ใช้การ์ดป้องกัน</button>
-                    <button onclick="skipDefense()">ยอมรับการโจมตี</button>
+                    <p>เลือกการ์ดที่คุณต้องการใช้ป้องกัน:</p>
+                    <div style="max-height:180px; overflow-y:auto; margin-bottom:10px;">
+                        ${cardsListHTML}
+                    </div>
+                    <button onclick="skipDefense()" style="background:#555;">ไม่ใช้การ์ด (ยอมรับการโจมตี)</button>
                 `;
             } else {
                 modalBody.innerHTML = `
@@ -382,7 +402,6 @@
             if(!me) return;
 
             document.getElementById('my-hp').innerText = me.hp;
-            // เจ้าของเทิร์นเห็น Energy จริงของตัวเอง
             document.getElementById('my-energy').innerText = me.energy;
 
             const currentTurnPlayer = room.players[room.currentTurnIndex];
@@ -445,8 +464,6 @@
                 }
 
                 const targetClass = isTargetable ? 'targetable' : '';
-
-                // ผู้เล่นอื่นจะเห็นค่า visibleEnergy (ไม่ลดทันทีจนกว่าจะจบเทิร์น)
                 const displayEnergy = (p.id === myId) ? p.energy : p.visibleEnergy;
 
                 const node = document.createElement('div');
