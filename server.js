@@ -5,104 +5,54 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-
-// อนุญาตให้การเชื่อมต่อข้าม Origin (CORS) ทำงานได้เมื่ออัปขึ้น Server
 const io = new Server(server, {
-    cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
-    }
+    cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-// กำหนดโฟลเดอร์สำหรับให้บริการไฟล์ Static HTML/CSS/JS
 app.use(express.static(path.join(__dirname, 'public')));
-
-// fallback สำหรับเปิดหน้าแรกถ้าเข้าผ่าน Root Directory
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 const rooms = {};
 
 io.on('connection', (socket) => {
-    console.log(`User connected: ${socket.id}`);
-
     socket.on('create_room', ({ roomCode, playerName }) => {
-        if (rooms[roomCode]) {
-            socket.emit('error_message', 'มีรหัสห้องนี้อยู่แล้ว!');
-            return;
-        }
-
+        if (rooms[roomCode]) return socket.emit('error_message', 'มีรหัสห้องนี้อยู่แล้ว!');
         rooms[roomCode] = {
             host: socket.id,
-            players: [{
-                id: socket.id,
-                name: playerName,
-                hp: 100,
-                energy: 5,
-                hand: [],
-                deck: generateDeck()
-            }],
+            players: [{ id: socket.id, name: playerName, hp: 100, energy: 5, hand: [], deck: generateDeck() }],
             currentTurnIndex: 0,
             gameStarted: false,
             pendingAttack: null
         };
-
         socket.join(roomCode);
         socket.roomCode = roomCode;
         socket.emit('room_joined', rooms[roomCode]);
-        console.log(`Room ${roomCode} created by ${playerName}`);
     });
 
     socket.on('join_room', ({ roomCode, playerName }) => {
         const room = rooms[roomCode];
-        if (!room) {
-            socket.emit('error_message', 'ไม่พบห้องนี้!');
-            return;
-        }
-        if (room.gameStarted) {
-            socket.emit('error_message', 'เกมเริ่มไปแล้ว ไม่สามารถเข้าได้!');
-            return;
-        }
-        if (room.players.length >= 8) {
-            socket.emit('error_message', 'ห้องเต็มแล้ว (สูงสุด 8 คน)!');
-            return;
-        }
+        if (!room) return socket.emit('error_message', 'ไม่พบห้องนี้!');
+        if (room.gameStarted) return socket.emit('error_message', 'เกมเริ่มไปแล้ว!');
+        if (room.players.length >= 8) return socket.emit('error_message', 'ห้องเต็มแล้ว!');
+        if (room.players.some(p => p.name === playerName)) return socket.emit('error_message', 'ชื่อซ้ำ!');
 
-        const nameExists = room.players.some(p => p.name === playerName);
-        if (nameExists) {
-            socket.emit('error_message', 'ชื่อนี้ถูกใช้ไปแล้วในห้องนี้ กรุณาใช้ชื่ออื่น!');
-            return;
-        }
-
-        room.players.push({
-            id: socket.id,
-            name: playerName,
-            hp: 100,
-            energy: 5,
-            hand: [],
-            deck: generateDeck()
-        });
-
+        room.players.push({ id: socket.id, name: playerName, hp: 100, energy: 5, hand: [], deck: generateDeck() });
         socket.join(roomCode);
         socket.roomCode = roomCode;
         socket.emit('room_joined', room);
         io.to(roomCode).emit('update_room', room);
-        console.log(`${playerName} joined room ${roomCode}`);
     });
 
     socket.on('start_game', () => {
         const room = rooms[socket.roomCode];
         if (!room || room.host !== socket.id) return;
-
         room.gameStarted = true;
         room.players.forEach(p => {
-            for (let i = 0; i < 2; i++) {
+            for (let i = 0; i < 3; i++) {
                 if (p.deck.length > 0) p.hand.push(p.deck.pop());
             }
             p.energy = 5;
         });
-
         io.to(socket.roomCode).emit('game_started', room);
     });
 
@@ -110,54 +60,49 @@ io.on('connection', (socket) => {
         const room = rooms[socket.roomCode];
         if (!room) return;
         const player = room.players.find(p => p.id === socket.id);
+        const maxHand = 5 + (room.players.length - 2);
 
-        if (player.energy < 1) {
-            socket.emit('error_message', 'Energy ไม่พอ (ต้องการ 1)');
-            return;
-        }
-        if (player.hand.length >= 3) {
-            socket.emit('error_message', 'ถือการ์ดเต็มมือแล้ว (สูงสุด 3 ใบ)');
-            return;
-        }
-        if (player.deck.length === 0) {
-            socket.emit('error_message', 'กองการ์ดหมดแล้ว!');
-            return;
-        }
+        if (player.energy < 1) return socket.emit('error_message', 'Energy ไม่พอ (ต้องการ 1)');
+        if (player.hand.length >= maxHand) return socket.emit('error_message', `ถือการ์ดเต็มมือแล้ว (สูงสุด ${maxHand} ใบ)`);
+        if (player.deck.length === 0) return socket.emit('error_message', 'กองการ์ดหมดแล้ว!');
 
         player.energy -= 1;
         player.hand.push(player.deck.pop());
-
         io.to(socket.roomCode).emit('update_room', room);
     });
 
-    socket.on('initiate_attack', ({ targetId, cardIndex }) => {
+    // โจมตีโดยระบุรายการ Index ของการ์ด (1 หรือ 2 ใบ)
+    socket.on('initiate_attack', ({ targetId, cardIndices }) => {
         const room = rooms[socket.roomCode];
         if (!room) return;
         const attacker = room.players.find(p => p.id === socket.id);
         const target = room.players.find(p => p.id === targetId);
 
-        if (attacker.energy < 3) {
-            socket.emit('error_message', 'Energy ไม่พอ (ต้องการ 3)');
-            return;
-        }
-        if (attacker.hand.length <= cardIndex) {
-            socket.emit('error_message', 'การ์ดไม่ถูกต้อง');
-            return;
-        }
+        const attackCost = cardIndices.length === 2 ? 5 : 3;
+        if (attacker.energy < attackCost) return socket.emit('error_message', `Energy ไม่พอ (ต้องการ ${attackCost})`);
 
-        attacker.energy -= 3;
-        const usedCard = attacker.hand.splice(cardIndex, 1)[0];
+        // ทิ้งการ์ดที่ถูกเลือกใช้งาน
+        cardIndices.sort((a, b) => b - a);
+        const usedCards = [];
+        cardIndices.forEach(idx => {
+            usedCards.push(attacker.hand.splice(idx, 1)[0]);
+        });
+
+        attacker.energy -= attackCost;
 
         room.pendingAttack = {
             attackerId: attacker.id,
             targetId: target.id,
-            card: usedCard
+            cardCount: cardIndices.length,
+            attackerRolls: [],
+            targetRoll: 0
         };
 
         const hasDefenseCard = target.hand.some(c => c.name === 'การ์ดโจมตี/ป้องกัน');
         io.to(target.id).emit('defend_prompt', {
             attackerName: attacker.name,
-            hasDefenseCard: hasDefenseCard
+            hasDefenseCard,
+            cardCount: cardIndices.length
         });
 
         io.to(socket.roomCode).emit('update_room', room);
@@ -166,93 +111,104 @@ io.on('connection', (socket) => {
     socket.on('skip_defense', () => {
         const room = rooms[socket.roomCode];
         if (!room || !room.pendingAttack) return;
-        executeBattle(room, 0);
+        startDicePhase(room, false);
     });
 
     socket.on('use_defense_card', ({ defenseCardIndex }) => {
         const room = rooms[socket.roomCode];
         if (!room || !room.pendingAttack) return;
-
         const target = room.players.find(p => p.id === socket.id);
+        
         if (target.hand.length > defenseCardIndex) {
             target.hand.splice(defenseCardIndex, 1);
         }
-
-        executeBattle(room, 1);
+        startDicePhase(room, true);
     });
 
-    function executeBattle(room, hasDefenderRolled) {
+    function startDicePhase(room, isDefending) {
+        const attackInfo = room.pendingAttack;
+        attackInfo.isDefending = isDefending;
+
+        // สั่งให้ผู้โจมตีทอยเต๋าก่อน
+        io.to(attackInfo.attackerId).emit('request_attacker_roll', {
+            targetId: attackInfo.targetId,
+            cardCount: attackInfo.cardCount
+        });
+    }
+
+    socket.on('submit_attacker_roll', ({ rolls }) => {
+        const room = rooms[socket.roomCode];
+        if (!room || !room.pendingAttack) return;
+        room.pendingAttack.attackerRolls = rolls;
+
+        if (room.pendingAttack.isDefending) {
+            // ส่งต่อให้ฝ่ายป้องกันทอยเต๋าหักล้าง
+            io.to(room.pendingAttack.targetId).emit('request_defender_roll');
+        } else {
+            // ฝ่ายป้องกันไม่ได้ใช้การ์ดป้องกัน (ถือว่าทอยได้ 0)
+            finalizeBattle(room, 0);
+        }
+    });
+
+    socket.on('submit_defender_roll', ({ roll }) => {
+        const room = rooms[socket.roomCode];
+        if (!room || !room.pendingAttack) return;
+        finalizeBattle(room, roll);
+    });
+
+    function finalizeBattle(room, targetRoll) {
         const attackInfo = room.pendingAttack;
         const attacker = room.players.find(p => p.id === attackInfo.attackerId);
         const target = room.players.find(p => p.id === attackInfo.targetId);
 
-        io.to(attacker.id).emit('request_attacker_roll', {
-            targetId: target.id,
-            hasDefenderRolled: hasDefenderRolled
-        });
-        room.pendingAttack = null;
-    }
-
-    socket.on('submit_attacker_roll', ({ targetId, attackerRoll, hasDefenderRolled }) => {
-        const room = rooms[socket.roomCode];
-        if (!room) return;
-        const attacker = room.players.find(p => p.id === socket.id);
-        const target = room.players.find(p => p.id === targetId);
-
-        let targetRoll = 0;
-        if (hasDefenderRolled === 1) {
-            targetRoll = Math.floor(Math.random() * 6) + 1;
-        }
-
-        let damage = 1 + attackerRoll - targetRoll;
+        const totalAttackerRoll = attackInfo.attackerRolls.reduce((a, b) => a + b, 0);
+        let damage = (1 * attackInfo.cardCount) + totalAttackerRoll - targetRoll;
         if (damage < 0) damage = 0;
 
-        target.hp -= damage;
-        if (target.hp < 0) target.hp = 0;
+        target.hp = Math.max(0, target.hp - damage);
 
         io.to(socket.roomCode).emit('battle_result', {
             attackerName: attacker.name,
             targetName: target.name,
-            attackerRoll,
+            attackerRolls: attackInfo.attackerRolls,
             targetRoll,
             damage,
             roomState: room
         });
 
+        room.pendingAttack = null;
         checkWinCondition(room);
-    });
+    }
 
     socket.on('end_turn', () => {
         const room = rooms[socket.roomCode];
         if (!room) return;
 
         room.currentTurnIndex = (room.currentTurnIndex + 1) % room.players.length;
-        room.players[room.currentTurnIndex].energy = 5;
+        const nextPlayer = room.players[room.currentTurnIndex];
+        // เพิ่ม Energy รอบละ +3 แต่สะสมไม่เกิน 5
+        nextPlayer.energy = Math.min(5, nextPlayer.energy + 3);
 
         io.to(socket.roomCode).emit('update_room', room);
     });
 
-    socket.on('disconnect', () => {
-        console.log(`User disconnected: ${socket.id}`);
-    });
+    socket.on('disconnect', () => console.log(`User disconnected: ${socket.id}`));
 });
 
 function generateDeck() {
     let deck = [];
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 20; i++) {
         deck.push({ id: i, name: 'การ์ดโจมตี/ป้องกัน', baseDamage: 1 });
     }
     return deck;
 }
 
 function checkWinCondition(room) {
-    const alivePlayers = room.players.filter(p => p.hp > 0);
-    if (alivePlayers.length === 1) {
-        io.to(socket.roomCode).emit('game_over', { winner: alivePlayers[0].name });
+    const alive = room.players.filter(p => p.hp > 0);
+    if (alive.length === 1) {
+        io.to(room.host).emit('game_over', { winner: alive[0].name });
     }
 }
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-});
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
