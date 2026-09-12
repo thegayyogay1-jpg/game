@@ -15,72 +15,48 @@
         button:disabled { background: #555; cursor: not-allowed; }
 
         .table-container {
-            position: relative;
-            width: 90vw;
-            max-width: 600px;
-            height: 90vw;
-            max-height: 600px;
-            margin: 10px auto;
-            border-radius: 50%;
-            background: radial-gradient(circle, #2e5233 0%, #172d1a 100%);
-            border: 10px solid #4a2e18;
-            box-shadow: 0 0 20px rgba(0,0,0,0.8);
+            position: relative; width: 90vw; max-width: 600px; height: 90vw; max-height: 600px;
+            margin: 10px auto; border-radius: 50%; background: radial-gradient(circle, #2e5233 0%, #172d1a 100%);
+            border: 10px solid #4a2e18; box-shadow: 0 0 20px rgba(0,0,0,0.8);
         }
 
         .center-deck {
-            position: absolute;
-            top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
-            width: 95px; height: 125px;
-            background: #2b3a42;
-            border: 3px solid #ff4757;
-            border-radius: 8px;
-            display: flex; flex-direction: column;
-            justify-content: center; align-items: center;
-            cursor: pointer;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 95px; height: 125px; background: #2b3a42; border: 3px solid #ff4757;
+            border-radius: 8px; display: flex; flex-direction: column; justify-content: center;
+            align-items: center; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
         }
-        .center-deck:active { transform: translate(-50%, -50%) scale(0.95); }
 
         .player-node {
-            position: absolute; width: 105px;
-            background: rgba(0, 0, 0, 0.8);
-            padding: 8px; border-radius: 8px;
-            border: 2px solid #555;
-            transform: translate(-50%, -50%);
+            position: absolute; width: 105px; background: rgba(0, 0, 0, 0.8);
+            padding: 8px; border-radius: 8px; border: 2px solid #555; transform: translate(-50%, -50%);
         }
         .player-node.active-turn { border-color: #2ed573; box-shadow: 0 0 10px #2ed573; }
         .targetable { border-color: #ffa502 !important; animation: glow 0.8s infinite alternate; cursor: pointer; }
 
         .card {
-            display: inline-block; background: #fff; color: #000;
-            padding: 8px; margin: 4px; border-radius: 6px;
-            width: 105px; font-size: 12px;
-            border: 3px solid transparent; cursor: pointer; user-select: none;
+            display: inline-block; background: #fff; color: #000; padding: 8px; margin: 4px;
+            border-radius: 6px; width: 105px; font-size: 12px; border: 3px solid transparent; cursor: pointer; user-select: none;
         }
         .card.magic { background: #a29bfe; color: #fff; }
         .card.fixed { background: #74b9ff; color: #000; font-weight: bold; }
+        .card.counter { background: #ff7675; color: #fff; font-weight: bold; }
         .card.selected { border-color: #ff4757; background: #ffeaa7; color:#000; transform: translateY(-5px); }
 
-        .def-card-opt {
-            display: block; width: 100%; margin: 6px 0; padding: 10px;
-            border-radius: 6px; font-weight: bold; text-align: center;
-        }
+        .def-card-opt { display: block; width: 100%; margin: 6px 0; padding: 10px; border-radius: 6px; font-weight: bold; text-align: center; }
         .def-card-opt.random { background: #fff; color: #000; }
         .def-card-opt.fixed { background: #74b9ff; color: #000; }
+        .def-card-opt.counter { background: #ff7675; color: #fff; }
 
         .dice {
-            display: inline-block; width: 50px; height: 50px;
-            background: #fff; color: #000; font-size: 28px;
-            line-height: 50px; font-weight: bold; border-radius: 8px;
-            margin: 5px; box-shadow: 0 3px 6px rgba(0,0,0,0.4);
+            display: inline-block; width: 50px; height: 50px; background: #fff; color: #000;
+            font-size: 28px; line-height: 50px; font-weight: bold; border-radius: 8px; margin: 5px; box-shadow: 0 3px 6px rgba(0,0,0,0.4);
         }
 
         .hidden { display: none !important; }
         #modal-overlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.85); display: none;
-            justify-content: center; align-items: center; z-index: 999;
+            background: rgba(0,0,0,0.85); display: none; justify-content: center; align-items: center; z-index: 999;
         }
         .modal-content { background: #222; padding: 25px; border-radius: 12px; border: 2px solid #ff4757; width: 340px; }
         @keyframes glow { from { border-color: #ffa502; } to { border-color: #ff4757; } }
@@ -117,6 +93,7 @@
 
         <div class="box">
             <h3>สถานะ: HP <span id="my-hp">100</span> | Energy <span id="my-energy">5</span></h3>
+            <div id="counter-status" style="color: #ff7675; font-weight: bold; margin-bottom: 5px;"></div>
             <h3>การ์ดในมือ</h3>
             <div id="hand-cards"></div>
             <p id="attack-hint" style="font-size: 13px; color: #ffa502;"></p>
@@ -200,6 +177,14 @@
             const currentTurnPlayer = currentRoomData.players[currentRoomData.currentTurnIndex];
             if(currentTurnPlayer.id !== myId) return alert('ยังไม่ใช่ตาของคุณ!');
 
+            // ใช้การ์ดสวนกลับใส่ตัวเอง (ใช้ 2 Energy)
+            if (type === 'counter_attack') {
+                if (confirm('ต้องการใช้การ์ดสวนกลับใส่ตัวเองหรือไม่? (ใช้ 2 Energy)')) {
+                    socket.emit('prepare_counter_card', { cardIndex: index });
+                }
+                return;
+            }
+
             if (type === 'double_energy' || type === 'block_defense') {
                 selectedCards = [];
                 selectedMagicCardIndex = index;
@@ -257,21 +242,31 @@
             showModal();
             modalBody.innerHTML = `
                 <h3>🔮 คำสาปทำงาน!</h3>
-                <p style="color:#ff4757; font-weight:bold;">✨ ยินดีด้วย! คุณโดนเวทมนตร์คำสาปบล็อคการป้องกัน จึงไม่สามารถใช้การ์ดป้องกันได้!</p>
+                <p style="color:#ff4757; font-weight:bold;">✨ คุณโดนเวทมนตร์บล็อคการป้องกัน! ไม่สามารถใช้การ์ดป้องกันปกติได้</p>
                 <p>เตรียมรับการโจมตีจาก <b>${data.attackerName}</b></p>
-                <button onclick="hideModal()" style="background:#ff4757;">รับชะตากรรม</button>
+                <button onclick="hideModal()" style="background:#ff4757;">ตกลง</button>
             `;
         });
 
-        // แสดงรายการการ์ดป้องกันให้เลือกใช้
+        // แสดงหน้าต่างเลือกป้องกัน (รองรับกรณีมี/ไม่มีคำสาป และการ์ดสวนกลับ)
         socket.on('defend_prompt', (data) => {
             const modalBody = document.getElementById('modal-body');
             showModal();
 
-            if (data.hasDefenseCard) {
-                const me = currentRoomData.players.find(p => p.id === myId);
-                
-                let cardsListHTML = '';
+            const me = currentRoomData.players.find(p => p.id === myId);
+            let cardsListHTML = '';
+
+            // 1. ตรวจสอบว่ามีท่าสวนกลับบัฟไว้อยู่หรือไม่
+            if (me.activeCounter) {
+                cardsListHTML += `
+                    <button class="def-card-opt counter" onclick="useCounterDefense()">
+                        ⚔️ ใช้การ์ดสวนกลับ! (ทอยแต้มไว้แล้ว)
+                    </button>
+                `;
+            }
+
+            // 2. การ์ดป้องกันปกติ (จะถูกบล็อคหากติดคำสาป)
+            if (data.hasDefenseCard && !data.isCurseBlocked) {
                 me.hand.forEach((card, idx) => {
                     if (card.type === 'attack_defend' || card.type === 'fixed_value') {
                         const optClass = card.type === 'fixed_value' ? 'fixed' : 'random';
@@ -282,19 +277,21 @@
                         `;
                     }
                 });
+            }
 
+            if (cardsListHTML !== '') {
                 modalBody.innerHTML = `
                     <h3>⚠️ ถูก ${data.attackerName} โจมตี!</h3>
-                    <p>เลือกการ์ดที่คุณต้องการใช้ป้องกัน:</p>
+                    <p>เลือกการรับมือของคุณ:</p>
                     <div style="max-height:180px; overflow-y:auto; margin-bottom:10px;">
                         ${cardsListHTML}
                     </div>
-                    <button onclick="skipDefense()" style="background:#555;">ไม่ใช้การ์ด (ยอมรับการโจมตี)</button>
+                    <button onclick="skipDefense()" style="background:#555;">ยอมรับการโจมตี</button>
                 `;
             } else {
                 modalBody.innerHTML = `
                     <h3>⚠️ ถูก ${data.attackerName} โจมตี!</h3>
-                    <p style="color:#ff4757;">คุณไม่มีการ์ดป้องกันในมือ</p>
+                    <p style="color:#ff4757;">คุณไม่มีการ์ดป้องกันหรือการ์ดสวนกลับในมือ</p>
                     <button onclick="skipDefense()">รับการโจมตี</button>
                 `;
             }
@@ -303,6 +300,11 @@
         function useDefense(cardIndex) {
             hideModal();
             socket.emit('use_defense_card', { defenseCardIndex: cardIndex });
+        }
+
+        function useCounterDefense() {
+            hideModal();
+            socket.emit('use_counter_defense');
         }
 
         function skipDefense() {
@@ -386,8 +388,16 @@
 
         socket.on('battle_result', (data) => {
             const attRollSum = data.attackerRolls.reduce((a, b) => a + b, 0);
-            const attRollStr = data.attackerRolls.join(' + ');
-            alert(`⚔️ ผลการต่อสู้ (${data.attackerName} vs ${data.targetName})\n🎲 ฝ่ายโจมตีได้แต้ม: ${attRollStr} (รวม ${attRollSum})\n🛡️ ฝ่ายป้องกันได้แต้ม: ${data.targetRoll}\n💥 ดาเมจสุทธิ (${attRollSum} - ${data.targetRoll}): ${data.damage}`);
+
+            if (data.isCounterSuccess) {
+                alert(`⚔️ ผลการสวนกลับสำเร็จ!\n🎲 ${data.attackerName} ทอยได้: ${attRollSum}\n💥 ${data.counterWinner} ทอยสวนกลับได้: ${data.targetRoll}\n\n✨ สวนกลับสำเร็จ! ${data.counterLoser} ได้รับดาเมจสะท้อนกลับจำนวน ${data.counterDamage} แต้ม!`);
+            } else if (data.isCounterFailed) {
+                alert(`💥 สวนกลับล้มเหลว!\n🎲 ${data.attackerName} ทอยได้: ${attRollSum}\n🛡️ แต้มสวนกลับ: ${data.targetRoll}\n\n❌ แต้มสวนกลับแพ้! คุณได้รับดาเมจเต็มจำนวน ${data.damage} แต้ม!`);
+            } else {
+                const attRollStr = data.attackerRolls.join(' + ');
+                alert(`⚔️ ผลการต่อสู้ (${data.attackerName} vs ${data.targetName})\n🎲 ฝ่ายโจมตีได้แต้ม: ${attRollStr} (รวม ${attRollSum})\n🛡️ ฝ่ายป้องกันได้แต้ม: ${data.targetRoll}\n💥 ดาเมจสุทธิ (${attRollSum} - ${data.targetRoll}): ${data.damage}`);
+            }
+
             updateGameUI(data.roomState);
         });
 
@@ -403,6 +413,14 @@
 
             document.getElementById('my-hp').innerText = me.hp;
             document.getElementById('my-energy').innerText = me.energy;
+
+            // แสดงสถานะถ้าตั้งท่าสวนกลับอยู่
+            const counterDiv = document.getElementById('counter-status');
+            if (me.activeCounter) {
+                counterDiv.innerText = `⚔️ เปิดใช้งานท่าสวนกลับอยู่ (แต้ม: ${me.activeCounter.rollValue})`;
+            } else {
+                counterDiv.innerText = '';
+            }
 
             const currentTurnPlayer = room.players[room.currentTurnIndex];
             const isMyTurn = currentTurnPlayer.id === myId;
@@ -428,6 +446,7 @@
                 let cardClass = '';
                 if (card.type === 'double_energy' || card.type === 'block_defense') cardClass = 'magic';
                 if (card.type === 'fixed_value') cardClass = 'fixed';
+                if (card.type === 'counter_attack') cardClass = 'counter';
 
                 handDiv.innerHTML += `
                     <div class="card ${cardClass} ${isSelected}" onclick="toggleSelectCard(${index}, '${card.type}')">
