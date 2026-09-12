@@ -295,31 +295,30 @@ io.on('connection', (socket) => {
         const attacker = room.players.find(p => p.id === attackInfo.attackerId);
         const target = room.players.find(p => p.id === attackInfo.targetId);
 
-        // --- ระบบคำนวณการสวนกลับแบบแยกคิดเต๋าทีละลูก ---
+        // --- ระบบคำนวณการสวนกลับแบบแยกคิดเต๋าทีละลูก (กติกาใหม่: เสมอ = ฝ่ายสวนกลับแพ้) ---
         if (attackInfo.useCounter && target.activeCounter) {
             const counterDamageBase = target.activeCounter.damageBase;
             const counterDefRoll = targetRoll; // แต้มที่ทอยป้องกันได้
             target.activeCounter = null; // รีเซ็ตท่าสวนกลับ
-
+        
             let damageToTarget = 0;   // ดาเมจที่เราโดน
             let damageToAttacker = 0; // ดาเมจที่เราสวนกลับใส่คนโจมตี
-
+        
             // เปรียบเทียบกับลูกเต๋าโจมตีทีละลูก
             attackInfo.attackerRolls.forEach(attDice => {
-                if (attDice > counterDefRoll) {
-                    // แพ้เต๋าลูกนี้ -> รับดาเมจลูกนี้เต็มๆ
+                if (attDice >= counterDefRoll) {
+                    // โจมตีมากกว่า หรือ เสมอกัน (>=) -> ฝ่ายสวนกลับแพ้ รับดาเมจลูกนี้เต็มๆ
                     damageToTarget += attDice;
-                } else if (counterDefRoll > attDice) {
-                    // ชนะเต๋าลูกนี้ -> สวนกลับ = (ดาเมจสวนกลับพื้นฐาน + ครึ่งหนึ่งของเต๋าลูกนี้ ปัดลง)
+                } else {
+                    // เต๋าโจมตี < แต้มวัดสวนกลับ -> สวนกลับสำเร็จ!
                     damageToAttacker += counterDamageBase + Math.floor(attDice / 2);
                 }
-                // ถ้าเท่ากัน (เสมอ) ไม่เกิดอะไรขึ้นกับเต๋าลูกนั้น
             });
-
+        
             // หัก HP ของทั้งสองฝ่าย
             target.hp = Math.max(0, target.hp - damageToTarget);
             attacker.hp = Math.max(0, attacker.hp - damageToAttacker);
-
+        
             io.to(socket.roomCode).emit('battle_result', {
                 isCounterBattle: true,
                 attackerName: attacker.name,
@@ -331,7 +330,7 @@ io.on('connection', (socket) => {
                 damageToAttacker: damageToAttacker,
                 roomState: room
             });
-
+        
             room.pendingAttack = null;
             checkWinCondition(room);
             return;
